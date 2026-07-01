@@ -1,0 +1,16 @@
+games.json
+config.json
+chat.json
+share.json
+stamps.json
+*.json
+*.lock
+uploads/
+backups/
+*.py
+*.bak*
+broken.*
+payload.*
+temp.*
+test_*
+.rate_limit*

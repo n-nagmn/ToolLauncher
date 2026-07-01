@@ -1,0 +1,3828 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tool Launcher</title>
+    <link rel="icon" type="image/svg+xml" href="favicon.svg?v=2">
+    <style>
+        /* ========================================
+         * Design Tokens & Reset
+         * ======================================== */
+        :root {
+            --bg-color: #1a1a1a;
+            --text-color: #f0f0f0;
+            --focus-color: #00e6e6;
+            --focus-color-rgb: 0, 230, 230;
+            --card-bg: rgba(45, 45, 45, 0.9);
+            --modal-bg: rgba(0, 0, 0, 0.85);
+            --modal-content-bg: #333;
+            --danger-color: #ff5252;
+            --success-color: #69f0ae;
+            --warning-color: #ffd740;
+            --pin-color: #ffeb3b;
+
+            --grid-min-width: 240px;
+            --grid-gap: 20px;
+            --card-radius: 8px;
+            --header-height: 70px;
+            --transition-fast: 0.15s;
+            --transition-normal: 0.25s;
+        }
+
+        /* Light Mode Overrides */
+        body.light-mode {
+            --bg-color: #e0e0e5;
+            --text-color: #1d1d1f;
+            --card-bg: rgba(255, 255, 255, 0.9);
+            --modal-content-bg: #f9f9f9;
+            --modal-bg: rgba(0, 0, 0, 0.2);
+        }
+
+        body.light-mode .game-card {
+            box-shadow: 0 4px 15px rgba(0,0,0,0.08);
+            background-color: var(--card-bg);
+            border: 1px solid rgba(0,0,0,0.05);
+        }
+        
+        body.light-mode .title-bar {
+            background: linear-gradient(to top, rgba(255,255,255,0.95), rgba(255,255,255,0.8));
+            color: #1d1d1f;
+            border-top: 1px solid rgba(0,0,0,0.05);
+        }
+
+        body.light-mode .card-category {
+            background: rgba(255,255,255,0.5);
+            color: #666;
+            border-top: 1px solid rgba(0,0,0,0.03);
+        }
+
+        body.light-mode .category-chip, 
+        body.light-mode .player-chip {
+            background: rgba(0,0,0,0.05);
+            border-color: rgba(0,0,0,0.1);
+            color: #333;
+        }
+
+        body.light-mode .search-container {
+            background: rgba(255, 255, 255, 0.8);
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        body.light-mode .search-container input { color: #333; }
+        body.light-mode .search-container input::placeholder { color: #999; }
+        
+        body.light-mode .modal-content {
+            color: #1d1d1f;
+            border-color: rgba(0,0,0,0.1);
+            box-shadow: 0 25px 80px rgba(0,0,0,0.2);
+        }
+        body.light-mode .form-group label { color: #222; font-weight: 600; }
+        body.light-mode .form-group input, 
+        body.light-mode .form-group select {
+            background: #fff;
+            color: #111;
+            border-color: #ccc;
+        }
+        body.light-mode .setting-group {
+            background: rgba(0,0,0,0.08);
+            border-color: rgba(0,0,0,0.15);
+        }
+        body.light-mode .form-group-checkbox { color: #111; font-weight: 500; }
+        body.light-mode .btn-cancel { background: #e0e0e0; color: #222; }
+        body.light-mode h3 { color: #000; font-weight: 800; border-bottom-color: rgba(0,0,0,0.2); }
+        body.light-mode .header-info-text { color: #ccc; }
+        body.light-mode .category-manage-chip { background: #f0f0f0; border-color: #ddd; color: #333; }
+
+        body.light-mode header {
+            background: linear-gradient(to bottom, rgba(255,255,255,0.9) 0%, transparent 100%);
+        }
+
+        body.light-mode .player-badge {
+            background: rgba(255, 255, 255, 0.9);
+            color: #333;
+            border-color: rgba(0,0,0,0.1);
+            box-shadow: 0 2px 6px rgba(0,0,0,0.05);
+        }
+
+        body.light-mode .active-badge {
+            background: #bbdefb;
+            color: #0d47a1;
+            border: 1px solid rgba(13, 71, 161, 0.2);
+        }
+
+        body.light-mode .sub-section {
+            border-top-color: rgba(0,0,0,0.15);
+        }
+        
+        body.light-mode .sub-section h4 {
+            color: #000;
+            font-weight: 800;
+        }
+
+        body.light-mode .sub-section p {
+            color: #222;
+            font-weight: 500;
+        }
+
+        body.light-mode .btn-outline {
+            border-color: rgba(0,0,0,0.2);
+            color: #333;
+        }
+        body.light-mode .btn-outline:hover {
+            background: rgba(0,0,0,0.05);
+            border-color: rgba(0,0,0,0.4);
+        }
+
+        body.light-mode .toast {
+            background: rgba(255, 255, 255, 0.95);
+            color: #333;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.15);
+            border-left-width: 5px;
+        }
+
+        body.light-mode .category-chip.active,
+        body.light-mode .player-chip.active {
+            background: var(--focus-color);
+            color: #000;
+            border-color: rgba(0,0,0,0.1);
+            box-shadow: 0 2px 8px rgba(var(--focus-color-rgb), 0.4);
+        }
+
+        /* Active chips for both modes (vibrancy boost) */
+        .category-chip.active,
+        .player-chip.active {
+            box-shadow: 0 0 15px rgba(var(--focus-color-rgb), 0.3);
+            transform: translateY(-1px);
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
+
+        html { scroll-behavior: smooth; }
+
+        body {
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            background-color: var(--bg-color);
+            background-size: cover;
+            background-position: center;
+            background-attachment: fixed;
+            color: var(--text-color);
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            transition: background-image 0.5s ease;
+        }
+
+        /* ========================================
+         * Toast Notification System
+         * ======================================== */
+        #toast-container {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            z-index: 1000;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            pointer-events: none;
+        }
+
+        .toast {
+            background: rgba(40, 40, 40, 0.95);
+            border-left: 4px solid var(--focus-color);
+            padding: 14px 20px;
+            border-radius: 6px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+            font-size: 14px;
+            max-width: 320px;
+            transform: translateX(120%);
+            transition: transform 0.25s cubic-bezier(0.1, 0.9, 0.2, 1);
+            pointer-events: auto;
+            backdrop-filter: blur(10px);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .toast.show { transform: translateX(0); }
+        .toast.error { border-left-color: var(--danger-color); }
+        .toast.success { border-left-color: var(--success-color); }
+        .toast.warning { border-left-color: var(--warning-color); }
+        .toast-icon { font-size: 18px; }
+
+        #chat-notification-container {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            z-index: 10000;
+            display: flex;
+            flex-direction: column;
+            align-items: flex-end;
+            gap: 10px;
+            pointer-events: none;
+            transition: right var(--transition-normal);
+            max-height: calc(100vh - 40px);
+            overflow-y: auto;
+            overflow-x: hidden;
+            padding: 10px;
+            margin-right: -10px; /* offset padding */
+        }
+        #chat-notification-container:hover {
+            pointer-events: auto;
+        }
+        body.chat-open #chat-notification-container {
+            right: 440px;
+        }
+        .chat-notification {
+            pointer-events: auto;
+            cursor: pointer;
+            background: rgba(30, 30, 30, 0.95);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-left: 4px solid var(--focus-color);
+            padding: 12px 16px;
+            border-radius: 6px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+            font-size: 13px;
+            width: max-content;
+            min-width: 320px;
+            max-width: 90vw;
+            max-height: 90vh;
+            overflow-y: auto;
+            flex-shrink: 0;
+            transform: translateX(120%);
+            transition: transform 0.25s cubic-bezier(0.1, 0.9, 0.2, 1), opacity 0.25s;
+            pointer-events: auto;
+            backdrop-filter: blur(10px);
+            cursor: pointer;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+        .chat-notification.show { transform: translateX(0); }
+        .chat-notification.hiding { opacity: 0; transform: translateX(120%); }
+        .chat-notification-header { display: flex; justify-content: space-between; color: #888; font-size: 11px; }
+        .chat-notification-name { color: var(--focus-color); font-weight: bold; }
+        .chat-notification-game { display: inline-block; background: rgba(255,255,255,0.1); padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: bold; color: #eee; width: max-content;}
+        .chat-notification-text { color: #eee; line-height: 1.4; word-break: break-word; white-space: pre-wrap; user-select: text; }
+
+        /* ========================================
+         * Header
+         * ======================================== */
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0 40px;
+            height: auto;
+            min-height: var(--header-height);
+            background: linear-gradient(to bottom, rgba(0,0,0,0.7) 0%, transparent 100%);
+            flex-shrink: 0;
+            gap: 20px;
+            padding-top: 12px;
+            padding-bottom: 12px;
+        }
+
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            flex: 1;
+            min-width: 0;
+            overflow: hidden;
+        }
+
+        .logo {
+            font-size: 22px;
+            font-weight: 800;
+            background: linear-gradient(135deg, var(--focus-color), #0088ff);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            letter-spacing: -0.5px;
+            flex-shrink: 0;
+        }
+
+        .category-filter {
+            display: flex;
+            gap: 8px;
+            overflow-x: auto;
+            scrollbar-width: none;
+            max-width: 100%;
+            flex-wrap: nowrap;
+            min-width: 0;
+            padding: 8px 0;
+        }
+        .category-filter::-webkit-scrollbar { display: none; }
+
+        .player-filter {
+            display: flex;
+            gap: 8px;
+            overflow-x: auto;
+            scrollbar-width: none;
+            max-width: 100%;
+            border-left: 1px solid rgba(255,255,255,0.1);
+            padding-left: 16px;
+            padding-top: 8px;
+            padding-bottom: 8px;
+            margin-left: 8px;
+            flex-wrap: nowrap;
+            min-width: 0;
+        }
+        .player-filter::-webkit-scrollbar { display: none; }
+
+        .player-chip {
+            padding: 6px 14px;
+            border-radius: 20px;
+            background: rgba(255,255,255,0.08);
+            border: 1px solid rgba(255,255,255,0.1);
+            font-size: 12px;
+            cursor: pointer;
+            transition: all var(--transition-fast);
+            white-space: nowrap;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+        .player-chip:hover { background: rgba(255,255,255,0.15); }
+        .player-chip.active {
+            background: var(--focus-color);
+            color: #000;
+            border-color: var(--focus-color);
+            font-weight: 700;
+        }
+        .player-chip::before {
+            content: "👤";
+            font-size: 10px;
+        }
+        .player-chip.multi::before {
+            content: "👥";
+        }
+
+        .category-chip {
+            padding: 6px 14px;
+            border-radius: 20px;
+            background: rgba(255,255,255,0.08);
+            border: 1px solid rgba(255,255,255,0.1);
+            font-size: 12px;
+            cursor: pointer;
+            transition: all var(--transition-fast);
+            white-space: nowrap;
+        }
+        .category-chip:hover { background: rgba(255,255,255,0.15); }
+        .category-chip.active {
+            background: var(--focus-color);
+            color: #000;
+            border-color: var(--focus-color);
+            font-weight: 700;
+        }
+        .category-chip.dragging {
+            opacity: 0.5;
+            border: 2px dashed var(--focus-color);
+        }
+
+        .header-right {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            font-size: 15px;
+            color: #eee;
+        }
+        body.light-mode .header-right {
+            color: #333;
+        }
+
+        .search-container {
+            display: flex;
+            align-items: center;
+            background: rgba(34, 34, 34, 0.8);
+            border-radius: 24px;
+            padding: 8px 16px;
+            border: 2px solid transparent;
+            transition: all var(--transition-fast);
+            box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+        }
+        .search-container:focus-within {
+            border-color: var(--focus-color);
+            background: rgba(17, 17, 17, 0.95);
+            box-shadow: 0 0 0 3px rgba(var(--focus-color-rgb), 0.15);
+        }
+        .search-container input {
+            background: transparent;
+            border: none;
+            color: white;
+            outline: none;
+            margin-left: 8px;
+            width: 140px;
+            font-size: 14px;
+            transition: width 0.3s ease;
+        }
+        .search-container input:focus { width: 220px; }
+        .search-container input::placeholder { color: #888; }
+
+        .header-info-text { font-size: 13px; color: #888; }
+
+        .settings-btn {
+            cursor: pointer;
+            font-size: 26px;
+            padding: 8px;
+            border-radius: 50%;
+            transition: all var(--transition-fast);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .settings-btn:hover {
+            color: var(--focus-color);
+            transform: scale(1.1);
+            background: rgba(255,255,255,0.05);
+        }
+        .settings-btn.chat-btn:hover {
+            transform: scale(1.1);
+        }
+
+        /* ========================================
+         * Main Content & Grid
+         * ======================================== */
+        main {
+            flex: 1;
+            padding: 24px 40px;
+            overflow-y: auto;
+            scrollbar-width: thin;
+            scrollbar-color: rgba(255,255,255,0.1) transparent;
+        }
+        main::-webkit-scrollbar { width: 8px; }
+        main::-webkit-scrollbar-track { background: transparent; }
+        main::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 4px; }
+        main::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.25); }
+
+        .grid-container {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(var(--grid-min-width), 1fr));
+            gap: var(--grid-gap);
+            padding-bottom: 40px;
+            min-height: 200px;
+        }
+
+        /* ========================================
+         * Cards
+         * ======================================== */
+        .game-card {
+            position: relative;
+            background-color: var(--card-bg);
+            border-radius: var(--card-radius);
+            cursor: pointer;
+            overflow: hidden;
+            border: 2px solid transparent;
+            transition: all var(--transition-normal) cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+            backdrop-filter: blur(8px);
+            outline: none;
+        }
+
+        .game-card:hover, .game-card.focused {
+            transform: scale(var(--hover-scale, 1.04));
+            border-color: var(--focus-color);
+            z-index: 10;
+            box-shadow: 0 12px 40px rgba(0,0,0,0.5), 0 0 20px rgba(var(--focus-color-rgb), 0.3);
+        }
+
+        .game-card.pinned {
+            /* border-color: rgba(var(--focus-color-rgb), 0.5); */
+        }
+
+        .game-card.focused { border-width: 3px; }
+
+        .game-card img {
+            width: 100%;
+            aspect-ratio: 16 / 9;
+            object-fit: cover;
+            pointer-events: none;
+            flex-grow: 1;
+            background: linear-gradient(135deg, #2a2a2a, #1a1a1a);
+            transition: opacity 0.3s;
+        }
+
+        .game-card img.loading { opacity: 0.3; }
+        .game-card img.loaded { opacity: 1; }
+
+        .player-badge {
+            position: absolute;
+            bottom: 8px;
+            right: 8px;
+            background: rgba(0, 0, 0, 0.75);
+            color: #fff;
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            backdrop-filter: blur(4px);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            z-index: 15;
+            letter-spacing: 0.3px;
+            white-space: nowrap;
+        }
+        .player-badge::before {
+            content: "👤";
+            font-size: 11px;
+            opacity: 0.9;
+        }
+        .player-badge.multi::before {
+            content: "👥";
+        }
+
+        .card-badge {
+            position: absolute;
+            top: 8px;
+            left: 8px;
+            background: rgba(0,0,0,0.7);
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 10px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            backdrop-filter: blur(4px);
+            z-index: 15;
+        }
+        .card-badge.new { background: var(--focus-color); color: #000; }
+        .card-badge.pinned-badge { background: var(--pin-color); color: #000; }
+
+        .active-badge {
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            background: #ADD8E6;
+            color: #000;
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 10px;
+            font-weight: 700;
+            z-index: 15;
+            backdrop-filter: blur(4px);
+            pointer-events: none;
+            transition: opacity 0.2s;
+            text-align: right;
+            line-height: 1.2;
+        }
+
+        .game-card:hover .active-badge,
+        .game-card.focused .active-badge {
+            opacity: 0;
+        }
+
+        .title-bar {
+            background: linear-gradient(to top, rgba(0,0,0,0.9), rgba(0,0,0,0.6));
+            padding: 7px 12px;
+            font-size: 13px;
+            font-weight: 600;
+            text-align: center;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            color: white;
+            border-top: 1px solid rgba(255,255,255,0.05);
+        }
+
+        .card-category {
+            font-size: 10px;
+            color: #aaa;
+            text-align: center;
+            padding: 4px 12px;
+            background: rgba(0,0,0,0.3);
+            border-top: 1px solid rgba(255,255,255,0.03);
+        }
+
+        body.hide-titles .title-bar,
+        body.hide-titles .card-category { display: none; }
+
+        .add-card {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background: rgba(255, 255, 255, 0.03);
+            font-size: 48px;
+            color: #666;
+            border: 2px dashed rgba(255,255,255,0.15);
+            backdrop-filter: blur(2px);
+            transition: all var(--transition-normal);
+        }
+        .add-card:hover {
+            background: rgba(255, 255, 255, 0.08);
+            border-color: var(--focus-color);
+            color: var(--focus-color);
+            transform: scale(var(--hover-scale, 1.02));
+        }
+
+        .edit-btn, .pin-btn {
+            position: absolute;
+            top: 8px;
+            background: rgba(0,0,0,0.6);
+            color: white;
+            border: 1px solid rgba(255,255,255,0.15);
+            border-radius: 50%;
+            width: 32px;
+            height: 32px;
+            font-size: 14px;
+            cursor: pointer;
+            opacity: 0;
+            transition: all var(--transition-fast);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 20;
+            backdrop-filter: blur(4px);
+        }
+        .edit-btn { right: 8px; }
+        .pin-btn { right: 48px; }
+        
+        .game-card:hover .edit-btn,
+        .game-card.focused .edit-btn,
+        .game-card:hover .pin-btn,
+        .game-card.focused .pin-btn { opacity: 1; }
+        
+        .edit-btn:hover {
+            background: var(--focus-color);
+            color: #000;
+            border-color: var(--focus-color);
+            transform: scale(1.1);
+        }
+        .pin-btn:hover, .pin-btn.active {
+            background: var(--pin-color);
+            color: #000;
+            border-color: var(--pin-color);
+            transform: scale(1.1);
+            opacity: 1;
+        }
+
+        /* Drag & Drop */
+        .game-card.dragging {
+            opacity: 0.4;
+            transform: scale(0.92) !important;
+            box-shadow: none !important;
+            border: 2px dashed var(--focus-color);
+        }
+
+        /* Empty State */
+        .empty-state {
+            grid-column: 1 / -1;
+            text-align: center;
+            padding: 80px 20px;
+            color: #666;
+        }
+        .empty-state-icon { font-size: 64px; margin-bottom: 16px; opacity: 0.5; }
+        .empty-state-text { font-size: 18px; margin-bottom: 8px; }
+        .empty-state-hint { font-size: 14px; color: #555; }
+
+        /* ========================================
+         * Modals
+         * ======================================== */
+        .modal {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: var(--modal-bg);
+            z-index: 100;
+            justify-content: center;
+            align-items: center;
+            opacity: 0;
+            transition: opacity 0.3s;
+            backdrop-filter: blur(5px);
+        }
+        .modal.active { display: flex; opacity: 1; }
+
+        .modal-content {
+            background: var(--modal-content-bg);
+            padding: 32px;
+            border-radius: 12px;
+            width: 520px;
+            max-width: 90vw;
+            box-shadow: 0 25px 80px rgba(0,0,0,0.8);
+            transform: translateY(-20px) scale(0.96);
+            transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            max-height: 90vh;
+            overflow-y: auto;
+            border: 1px solid rgba(255,255,255,0.05);
+        }
+        .modal.active .modal-content { transform: translateY(0) scale(1); }
+
+        .modal-content::-webkit-scrollbar { width: 6px; }
+        .modal-content::-webkit-scrollbar-thumb { background: #555; border-radius: 3px; }
+
+        .modal-content h2 {
+            margin-bottom: 24px;
+            font-size: 22px;
+            text-align: center;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+            padding-bottom: 16px;
+            font-weight: 700;
+        }
+        
+        /* 設定モーダル内のグループ化スタイル */
+        .setting-group {
+            background: rgba(0, 0, 0, 0.15);
+            padding: 16px;
+            border-radius: 8px;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            margin-bottom: 24px;
+        }
+        .setting-group > .form-group:last-child,
+        .setting-group > .form-group-checkbox:last-child {
+            margin-bottom: 0;
+        }
+        .sub-section {
+            margin-top: 20px;
+            padding-top: 16px;
+            border-top: 1px solid rgba(255, 255, 255, 0.05);
+        }
+        .sub-section h4 {
+            font-size: 14px;
+            color: var(--focus-color);
+            margin-bottom: 8px;
+            font-weight: 600;
+        }
+        .sub-section p {
+            font-size: 12px;
+            color: #888;
+            margin-bottom: 12px;
+        }
+
+        .modal-content h3 {
+            font-size: 15px;
+            margin: 32px 0 12px 0;
+            color: var(--text-color);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-weight: 600;
+            border-bottom: 1px dashed rgba(255,255,255,0.1);
+            padding-bottom: 8px;
+        }
+        
+        .form-group { margin-bottom: 16px; }
+        .form-group label {
+            display: block;
+            margin-bottom: 6px;
+            font-size: 13px;
+            color: #bbb;
+            font-weight: 500;
+        }
+        .form-group input[type="text"],
+        .form-group input[type="url"],
+        .form-group input[type="number"],
+        .form-group select {
+            width: 100%;
+            padding: 10px 14px;
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 6px;
+            background: rgba(0,0,0,0.3);
+            color: white;
+            outline: none;
+            font-size: 14px;
+            transition: all var(--transition-fast);
+        }
+        .form-group input:focus,
+        .form-group select:focus {
+            border-color: var(--focus-color);
+            box-shadow: 0 0 0 3px rgba(var(--focus-color-rgb), 0.1);
+        }
+        .form-group input::placeholder { color: #666; }
+
+        .form-group input[type="color"] {
+            width: 100%;
+            height: 44px;
+            padding: 3px;
+            background: rgba(0,0,0,0.3);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 6px;
+            cursor: pointer;
+        }
+
+        .form-group small {
+            display: block;
+            margin-top: 4px;
+            color: #777;
+            font-size: 11px;
+        }
+
+        .form-group-checkbox {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 12px;
+            font-size: 14px;
+            color: #ddd;
+            cursor: pointer;
+            padding: 4px;
+            border-radius: 4px;
+            transition: background var(--transition-fast);
+        }
+        .form-group-checkbox:hover { background: rgba(255,255,255,0.03); }
+        .form-group-checkbox input[type="checkbox"] {
+            width: 18px;
+            height: 18px;
+            accent-color: var(--focus-color);
+            cursor: pointer;
+        }
+
+        .modal-actions {
+            display: flex;
+            justify-content: flex-end;
+            gap: 12px;
+            margin-top: 28px;
+            padding-top: 20px;
+            border-top: 1px solid rgba(255,255,255,0.08);
+        }
+
+        button, .btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 14px;
+            transition: all var(--transition-fast);
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+        button:active { transform: scale(0.96); }
+        button:focus-visible {
+            outline: 2px solid var(--focus-color);
+            outline-offset: 2px;
+        }
+
+        .btn-cancel { background: rgba(255,255,255,0.1); color: white; }
+        .btn-cancel:hover { background: rgba(255,255,255,0.2); }
+        .btn-save {
+            background: var(--focus-color);
+            color: #000;
+            box-shadow: 0 4px 15px rgba(var(--focus-color-rgb), 0.3);
+        }
+        .btn-save:hover { filter: brightness(1.15); transform: translateY(-1px); }
+        .btn-delete { background: rgba(255, 82, 82, 0.15); color: var(--danger-color); margin-right: auto; border: 1px solid rgba(255,82,82,0.3); }
+        .btn-delete:hover { background: rgba(255, 82, 82, 0.25); }
+        .btn-outline { background: transparent; color: #ccc; border: 1px solid rgba(255,255,255,0.15); }
+        .btn-outline:hover { background: rgba(255,255,255,0.05); border-color: rgba(255,255,255,0.3); }
+        .btn-danger { background: transparent; color: var(--danger-color); border: 1px solid rgba(255,82,82,0.4); width: 100%; padding: 12px; }
+        .btn-danger:hover { background: rgba(255, 82, 82, 0.1); }
+
+        .settings-btn-group { display: flex; gap: 10px; }
+        .settings-btn-group button { flex: 1; justify-content: center; }
+
+        .category-manage-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 12px;
+            background: rgba(255,255,255,0.05);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 20px;
+            font-size: 13px;
+            margin: 0 8px 8px 0;
+        }
+        .category-manage-chip button {
+            background: transparent;
+            border: none;
+            color: var(--danger-color);
+            cursor: pointer;
+            padding: 0 4px;
+            font-size: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .category-manage-chip button:hover {
+            color: #ff1a1a;
+            transform: scale(1.2);
+        }
+
+        /* ========================================
+         * Chat Sidebar
+         * ======================================== */
+        .chat-sidebar {
+            position: fixed;
+            top: 0;
+            right: -430px;
+            width: 410px;
+            height: 100vh;
+            background: var(--modal-content-bg);
+            box-shadow: -5px 0 25px rgba(0,0,0,0.5);
+            z-index: 1000;
+            display: flex;
+            flex-direction: column;
+            transition: right 0.25s cubic-bezier(0.1, 0.9, 0.2, 1);
+            border-left: 1px solid rgba(255,255,255,0.05);
+        }
+        .chat-sidebar.active { right: 0; }
+        .chat-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 20px;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+        }
+        .chat-header h3 { margin: 0; font-size: 16px; border: none; padding: 0; display: flex; align-items: center; gap: 8px;}
+        .chat-close-btn {
+            background: transparent;
+            border: none;
+            color: #888;
+            font-size: 24px;
+            cursor: pointer;
+            padding: 0;
+        }
+        .chat-close-btn:hover { color: white; }
+        .chat-messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+        .chat-messages::-webkit-scrollbar { width: 6px; }
+        .chat-messages::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.2); border-radius: 3px; }
+        .chat-message-item {
+            background: rgba(0,0,0,0.2);
+            border-radius: 8px;
+            padding: 10px;
+            font-size: 13px;
+        }
+        .chat-message-header {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 4px;
+            font-size: 11px;
+            color: #aaa;
+        }
+        .chat-message-name { font-weight: bold; color: var(--focus-color); }
+        .chat-message-game { display: inline-block; background: rgba(255,255,255,0.1); padding: 3px 8px; border-radius: 4px; font-size: 11px; margin-bottom: 6px; font-weight: 600; cursor: pointer; transition: background 0.2s;}
+        .chat-message-game:hover { background: rgba(255,255,255,0.2); }
+        .chat-message-text { word-break: break-word; line-height: 1.4; color: #eee; white-space: pre-wrap; user-select: text; }
+        
+        .replied-message {
+            display: flex;
+            align-items: center;
+            font-size: 11px;
+            color: #b9bbbe;
+            margin-bottom: 2px;
+            padding-left: 28px;
+            position: relative;
+            user-select: none;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .replied-message::before {
+            content: '';
+            position: absolute;
+            display: block;
+            top: 50%;
+            left: 12px;
+            width: 12px;
+            height: 10px;
+            border-left: 2px solid #4f545c;
+            border-top: 2px solid #4f545c;
+            border-top-left-radius: 6px;
+            box-sizing: border-box;
+        }
+        body.light-mode .replied-message { color: #5c5e66; }
+        body.light-mode .replied-message::before { border-color: #c4c9ce; }
+        .aa-font { font-family: "Osaka-等幅", "Osaka-Mono", "ＭＳ ゴシック", "MS Gothic", "Consolas", "Courier New", monospace !important; font-size: 10px !important; line-height: 1 !important; white-space: pre !important; word-wrap: normal !important; word-break: normal !important; overflow-x: auto; padding-bottom: 4px; user-select: text !important; }
+        .chat-input-area {
+            padding: 16px;
+            background: rgba(0,0,0,0.2);
+            border-top: 1px solid rgba(255,255,255,0.1);
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .chat-input-area input, .chat-input-area select, .chat-input-area textarea {
+            width: 100%;
+            padding: 10px 12px;
+            background: rgba(0,0,0,0.4);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 6px;
+            color: white;
+            font-size: 13px;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+        .chat-input-area input:focus, .chat-input-area select:focus, .chat-input-area textarea:focus {
+            border-color: var(--focus-color);
+        }
+        .chat-input-area textarea { resize: none; overflow-y: hidden; max-height: 50vh; }
+        
+        body.light-mode .chat-message-item { background: rgba(0,0,0,0.08); }
+        body.light-mode .chat-message-name { color: #111; }
+        body.light-mode .chat-message-game { background: rgba(0,0,0,0.1); color: #333; }
+        body.light-mode .chat-message-game:hover { background: rgba(0,0,0,0.15); }
+        body.light-mode .chat-message-text { color: #333; }
+        body.light-mode .chat-input-area { background: rgba(0,0,0,0.06); }
+        body.light-mode .chat-input-area input, body.light-mode .chat-input-area select, body.light-mode .chat-input-area textarea {
+            background: #fff; color: #111; border-color: #ccc;
+        }
+        body.light-mode .chat-notification {
+            pointer-events: auto;
+            cursor: pointer; background: rgba(255, 255, 255, 0.95); box-shadow: 0 8px 32px rgba(0,0,0,0.15); border-color: rgba(0,0,0,0.1); }
+        body.light-mode .chat-notification-name { color: #111; }
+        body.light-mode .chat-notification-game { background: rgba(0,0,0,0.1); color: #333; }
+        body.light-mode .chat-notification-text { color: #333; }
+        
+        .share-input-box {
+            background: rgba(0,0,0,0.4);
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+        body.light-mode .share-input-box {
+            background: #fff;
+            border-color: #ccc;
+        }
+
+
+        .chat-sidebar.drag-over::after {
+            content: '';
+            position: absolute;
+            top: 10px; left: 10px; right: 10px; bottom: 10px;
+            border: 3px dashed var(--focus-color);
+            background: rgba(255, 255, 255, 0.03);
+            border-radius: 8px;
+            pointer-events: none;
+            z-index: 1000;
+        }
+
+        #server-backup-select {
+            padding: 4px;
+        }
+        #server-backup-select option {
+            padding: 8px;
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+            cursor: pointer;
+            border-radius: 4px;
+        }
+        body.light-mode #server-backup-select option {
+            border-bottom: 1px solid rgba(0,0,0,0.05);
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            header { padding: 0 20px; }
+            main { padding: 16px 20px; }
+            /* .header-left .category-filter { display: none; } */
+            .search-container input { width: 100px; }
+            .search-container input:focus { width: 150px; }
+            footer { padding: 0 20px; font-size: 11px; }
+            .modal-content { padding: 24px; }
+            .chat-sidebar { width: 100%; right: -100%; }
+        }
+        .reaction-btn {
+            background: rgba(128,128,128,0.1);
+            border: 1px solid rgba(128,128,128,0.3);
+            border-radius: 12px;
+            padding: 2px 6px;
+            font-size: 11px;
+            color: inherit;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            transition: all 0.2s;
+        }
+        .reaction-btn:hover {
+            background: rgba(128,128,128,0.2);
+        }
+        .reaction-btn.reacted {
+            background: rgba(0, 123, 255, 0.15);
+            border-color: #007bff;
+            color: #007bff;
+        }
+        .light-mode .reaction-btn.reacted {
+            background: rgba(0, 123, 255, 0.1);
+            color: #0056b3;
+            border-color: #007bff;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="toast-container"></div>
+    <div id="chat-notification-container"></div>
+
+    <header>
+        <div class="header-left">
+            <div id="ranking-toggle-container"></div>
+            <div class="category-filter" id="category-filter"></div>
+            <div class="player-filter" id="player-filter"></div>
+        </div>
+        <div class="header-right">
+            <div class="search-container">
+                <span>🔍</span>
+                <input type="text" id="search-input" placeholder="検索..." autocomplete="off">
+            </div>
+            <span class="header-info-text">|</span>
+            <div class="settings-btn share-btn" onclick="App.openShare()" title="投稿 (Share)" tabindex="0" role="button" aria-label="投稿 (Share)"><svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block; vertical-align:-0.15em; margin-right: 2px;"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"></path><polyline points="16 6 12 2 8 6"></polyline><line x1="12" y1="2" x2="12" y2="15"></line></svg></div>
+            <div class="settings-btn chat-btn" onclick="App.openChat()" title="チャット" tabindex="0" role="button" aria-label="チャット"><svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block; vertical-align:-0.15em; margin-right: 2px;"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"></path><circle cx="8" cy="11" r="1.5" fill="currentColor" stroke="none"></circle><circle cx="12" cy="11" r="1.5" fill="currentColor" stroke="none"></circle><circle cx="16" cy="11" r="1.5" fill="currentColor" stroke="none"></circle></svg></div>
+            <div class="settings-btn" onclick="App.openSettings()" title="設定" tabindex="0" role="button" aria-label="設定">⚙️</div>
+        </div>
+    </header>
+
+    <main id="main-content">
+        <div class="grid-container" id="game-grid"></div>
+    </main>
+
+    <div class="modal" id="game-modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+        <div class="modal-content">
+            <h2 id="modal-title">ゲームを追加</h2>
+            <input type="hidden" id="game-id">
+
+            <div class="form-group">
+                <label for="game-name">タイトル *</label>
+                <input type="text" id="game-name" placeholder="例: Super Web Mario" required autocomplete="off">
+            </div>
+            <div style="display: flex; gap: 15px;">
+                <div class="form-group" style="flex: 1;">
+                    <label for="game-category">カテゴリー</label>
+                    <select id="game-category" onchange="App.handleCategoryChange(this)">
+                        <option value="">未分類</option>
+                        <option value="action">アクション</option>
+                        <option value="puzzle">パズル</option>
+                        <option value="rpg">RPG</option>
+                        <option value="shooter">シューティング</option>
+                        <option value="sports">スポーツ</option>
+                        <option value="strategy">ストラテジー</option>
+                        <option value="casual">カジュアル</option>
+                        <option value="retro">レトロ</option>
+                        <option value="__new__">＋ 新規カテゴリー...</option>
+                    </select>
+                    <input type="text" id="game-category-new" placeholder="新規カテゴリー名" style="display:none; margin-top:8px; width:100%; padding:10px 14px; border:1px solid rgba(255,255,255,0.1); border-radius:6px; background:rgba(0,0,0,0.3); color:white; outline:none; font-size:14px;">
+                </div>
+                <div class="form-group" style="flex: 1;">
+                    <label>プレイ人数</label>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <select id="game-players-min" style="flex: 1;">
+                            <option value="">?</option>
+                            <option value="1">1</option>
+                            <option value="2">2</option>
+                            <option value="3">3</option>
+                            <option value="4">4</option>
+                            <option value="5">5</option>
+                            <option value="6">6</option>
+                            <option value="8">8</option>
+                            <option value="10">10</option>
+                            <option value="12">12</option>
+                            <option value="16">16</option>
+                            <option value="20">20</option>
+                            <option value="32">32</option>
+                            <option value="50">50</option>
+                            <option value="64">64</option>
+                            <option value="100">100</option>
+                        </select>
+                        <span style="color: #888; font-size: 13px;">〜</span>
+                        <select id="game-players-max" style="flex: 1;">
+                            <option value="">?</option>
+                            <option value="1">1</option>
+                            <option value="2">2</option>
+                            <option value="3">3</option>
+                            <option value="4">4</option>
+                            <option value="5">5</option>
+                            <option value="6">6</option>
+                            <option value="8">8</option>
+                            <option value="10">10</option>
+                            <option value="12">12</option>
+                            <option value="16">16</option>
+                            <option value="20">20</option>
+                            <option value="32">32</option>
+                            <option value="50">50</option>
+                            <option value="64">64</option>
+                            <option value="100">100</option>
+                            <option value="999">∞</option>
+                        </select>
+                        <span style="color: #888; font-size: 13px;">人</span>
+                    </div>
+                </div>
+            </div>
+            <div class="form-group">
+                <label for="game-url">ゲームURL *</label>
+                <input type="url" id="game-url" placeholder="https://..." required>
+            </div>
+            <div class="form-group">
+                <label for="game-image">サムネイル画像URL</label>
+                <input type="url" id="game-image" placeholder="https://...">
+            </div>
+
+            <div class="modal-actions">
+                <button class="btn-delete" id="btn-delete" style="display: none;">削除</button>
+                <button class="btn-cancel" onclick="App.closeGameModal()">キャンセル</button>
+                <button class="btn-save" onclick="App.saveGame()">保存</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal" id="settings-modal" role="dialog" aria-modal="true" aria-label="システム設定">
+        <div class="modal-content">
+            <h2>システム設定</h2>
+
+            <h3>個人設定</h3>
+            <p style="font-size: 12px; color: #888; margin-bottom: 12px;">これらの設定はあなたのブラウザのみに保存され、他の人に影響しません。</p>
+            <div class="setting-group">
+                <div class="form-group">
+                    <label for="setting-grid-size">カードサイズ</label>
+                    <div style="display: flex; gap: 10px;">
+                        <select id="setting-grid-size" onchange="App.handleGridSizeChange()" style="flex: 1;">
+                            <option value="180px">小 (180px)</option>
+                            <option value="240px">中 (240px) - 標準</option>
+                            <option value="300px">大 (300px)</option>
+                            <option value="360px">特大 (360px)</option>
+                            <option value="custom">カスタム</option>
+                        </select>
+                        <input type="number" id="setting-grid-size-custom" placeholder="px" style="display: none; flex: 1; width: 80px;" min="50" max="1000">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="setting-clock-format">時計のフォーマット</label>
+                    <select id="setting-clock-format">
+                        <option value="24h">24時間表示 (15:00)</option>
+                        <option value="12h">12時間表示 (03:00 PM)</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="setting-accent-color">アクセントカラー</label>
+                    <input type="color" id="setting-accent-color" value="#00e6e6">
+                </div>
+                <div style="display: flex; gap: 15px;">
+                    <div class="form-group" style="flex: 1;">
+                        <label for="setting-border-radius">カードの角丸</label>
+                        <select id="setting-border-radius">
+                            <option value="0px">直角</option>
+                            <option value="4px">少し丸み (4px)</option>
+                            <option value="8px">丸み (8px) - 標準</option>
+                            <option value="16px">かなり丸み (16px)</option>
+                            <option value="24px">すごく丸み (24px)</option>
+                        </select>
+                    </div>
+                    <div class="form-group" style="flex: 1;">
+                        <label for="setting-カードの隙間">カードの隙間</label>
+                        <select id="setting-card-gap">
+                            <option value="10px">狭い (10px)</option>
+                            <option value="20px">標準 (20px)</option>
+                            <option value="32px">広い (32px)</option>
+                            <option value="48px">すごく広い (48px)</option>
+                        </select>
+                    </div>
+                </div>
+
+                <label class="form-group-checkbox">
+                    <input type="checkbox" id="setting-show-title">
+                    <span>カードの下部にタイトルを表示する</span>
+                </label>
+                <label class="form-group-checkbox">
+                    <input type="checkbox" id="setting-new-tab">
+                    <span>ゲームを新しいタブで開く</span>
+                </label>
+                <label class="form-group-checkbox">
+                    <input type="checkbox" id="setting-animations">
+                    <span>ホバー時のアニメーションを有効にする</span>
+                </label>
+                <label class="form-group-checkbox">
+                    <input type="checkbox" id="setting-light-mode">
+                    <span>ライトモードを使用する</span>
+                </label>
+            </div>
+
+            <h3 class="global-setting">全体設定</h3>
+            <p style="font-size: 12px; color: #888; margin-bottom: 12px;">変更すると、アクセスしている全員の画面に反映されます。</p>
+            
+            <div class="setting-group">
+                <div class="form-group">
+                    <label for="setting-bg-image">カスタム背景画像URL</label>
+                    <input type="url" id="setting-bg-image" placeholder="https://example.com/wallpaper.jpg">
+                </div>
+
+                <div class="sub-section">
+                    <h4>カテゴリー管理</h4>
+                    <p>不要になったカテゴリーを削除します（対象のゲームは「未分類」になります）。</p>
+                    <div id="settings-category-list"></div>
+                </div>
+
+                <div class="sub-section" id="stamp-settings-section">
+                    <h4>スタンプ</h4>
+                    <p>チャット等で使えるリアクションスタンプを追加・削除します。</p>
+                    <div class="form-group" style="display: flex; gap: 8px; width: 100%; margin-bottom: 8px; flex-direction: row; align-items: stretch;">
+                        <input type="text" id="new-stamp-input" placeholder="新しいスタンプ (例: ✨, 乙, 草)" style="flex-grow: 1; padding: 10px 14px; margin: 0; box-sizing: border-box;">
+                        <button onclick="App.addCustomStamp()" class="btn-outline" style="white-space: nowrap; padding: 10px 14px; margin: 0; display: flex; align-items: center; box-sizing: border-box;">追加</button>
+                        <label class="btn btn-outline" style="white-space: nowrap; padding: 10px 14px; margin: 0; cursor: pointer; display: flex; align-items: center; box-sizing: border-box; gap: 4px;">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>
+                            画像
+                            <input type="file" accept="image/*" style="display:none;" onchange="App.addCustomImageStamp(event)">
+                        </label>
+                    </div>
+                    <div id="custom-stamps-list" style="display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px;"></div>
+                </div>
+
+                <div class="sub-section">
+                    <h4>データ管理</h4>
+                    <p>ゲームデータの書き出し・読み込みを行います。</p>
+                    <div class="settings-btn-group">
+                        <button class="btn-outline" onclick="App.exportData()">↑ エクスポート</button>
+                        <button class="btn-outline" onclick="document.getElementById('import-file').click()">↓ インポート</button>
+                        <input type="file" id="import-file" style="display: none;" accept=".zip" onchange="App.importData(event)">
+                    </div>
+                </div>
+
+                <div class="sub-section">
+                    <h4>サーバーバックアップ管理</h4>
+                    <p>サーバー上のデータをバックアップ・復元します。</p>
+                    <div style="display: flex; gap: 10px; margin-bottom: 12px;">
+                        <button class="btn-outline" style="flex:1;" onclick="App.createServerBackup()">手動バックアップ作成</button>
+                    </div>
+                    <div class="form-group" style="margin-bottom: 12px;">
+                        <select id="server-backup-select" multiple size="8" style="height: auto;">
+                            <option value="">読込中...</option>
+                        </select>
+                    </div>
+                    <div style="display: flex; gap: 10px;">
+                        <button class="btn-danger" style="flex:2; padding: 10px;" onclick="App.restoreServerBackup()">選択したバックアップから復元</button>
+                        <button class="btn-danger" style="flex:1; padding: 10px;" onclick="App.deleteServerBackup()">削除</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="modal-actions">
+                <button class="btn-cancel" onclick="App.closeSettings()">キャンセル</button>
+                <button class="btn-save" onclick="App.saveSettings()">設定を保存</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="share-sidebar" class="chat-sidebar">
+        <div class="chat-header">
+            <h3><svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block; vertical-align:-0.15em; margin-right: 8px;"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"></path><polyline points="16 6 12 2 8 6"></polyline><line x1="12" y1="2" x2="12" y2="15"></line></svg> 投稿 (Share)</h3>
+            <button class="chat-close-btn" onclick="App.closeShare()" title="閉じる">×</button>
+        </div>
+        <div class="chat-messages" id="share-messages">
+            <!-- Share messages will be rendered here -->
+        </div>
+        <div class="chat-input-area" style="position: relative;">
+            <div id="share-reply-preview" style="display: none; font-size: 11px; padding: 4px; background: rgba(128,128,128,0.1); border-left: 3px solid var(--focus-color); margin-bottom: 4px; justify-content: space-between; align-items: center; border-radius: 4px;">
+                <span style="overflow: hidden; white-space: nowrap; text-overflow: ellipsis;"><span style="color:gray;">返信先:</span> <strong id="share-reply-name"></strong> <span id="share-reply-text" style="color:gray;"></span></span>
+                <button onclick="App.cancelReply(true)" style="background: none; border: none; cursor: pointer; color: gray;">✕</button>
+            </div>
+            <input type="text" id="share-name" placeholder="名前 (省略可)">
+            <select id="share-game-select">
+                <option value="">ゲーム指定なし</option>
+            </select>
+            <div class="share-input-box" style="position: relative; width: 100%; border-radius: 6px; display: flex; flex-direction: column; min-height: 80px; box-sizing: border-box; margin-bottom: 8px;" id="share-input-wrapper">
+                <textarea id="share-message" placeholder="メッセージを入力... (画像はドラッグ＆ドロップで添付)" rows="2" style="width: 100%; border: none; background: transparent; color: var(--text-color); padding: 10px; font-size: 13px; font-family: inherit; outline: none; resize: none; box-sizing: border-box; flex-grow: 1; margin: 0;"></textarea>
+                <div id="share-image-preview-container" style="display: none; position: relative; margin: 0 10px 10px 10px; width: fit-content;">
+                    <img id="share-image-preview-img" style="max-height: 80px; border-radius: 4px;" />
+                    <button onclick="App.clearShareImage()" style="position: absolute; top: -8px; right: -8px; background: #ff5252; color: white; border: none; border-radius: 50%; width: 22px; height: 22px; cursor: pointer; font-weight: bold; display: flex; align-items: center; justify-content: center; font-size: 14px; padding: 0; box-shadow: 0 2px 4px rgba(0,0,0,0.3);">×</button>
+                </div>
+            </div>
+            <input type="file" id="share-image" accept="image/*" onchange="App.handleShareImageSelect()" style="display: none;">
+            <button class="btn-save" style="width: 100%; justify-content: center;" onclick="App.submitShare()" id="share-submit-btn">送信</button>
+        </div>
+    </div>
+
+    <!-- Chat Sidebar -->
+    <div id="chat-sidebar" class="chat-sidebar">
+        <div class="chat-header">
+            <h3><svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block; vertical-align:-0.15em; margin-right: 2px;"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"></path><circle cx="8" cy="11" r="1.5" fill="currentColor" stroke="none"></circle><circle cx="12" cy="11" r="1.5" fill="currentColor" stroke="none"></circle><circle cx="16" cy="11" r="1.5" fill="currentColor" stroke="none"></circle></svg> 募集・チャット</h3>
+            <button class="chat-close-btn" onclick="App.closeChat()" title="閉じる">×</button>
+        </div>
+        <div class="chat-messages" id="chat-messages">
+            <!-- Messages will be rendered here -->
+        </div>
+        <div class="chat-input-area">
+            <div id="chat-reply-preview" style="display: none; font-size: 11px; padding: 4px; background: rgba(128,128,128,0.1); border-left: 3px solid var(--focus-color); margin-bottom: 4px; justify-content: space-between; align-items: center; border-radius: 4px;">
+                <span style="overflow: hidden; white-space: nowrap; text-overflow: ellipsis;"><span style="color:gray;">返信先:</span> <strong id="chat-reply-name"></strong> <span id="chat-reply-text" style="color:gray;"></span></span>
+                <button onclick="App.cancelReply(false)" style="background: none; border: none; cursor: pointer; color: gray;">✕</button>
+            </div>
+            <input type="text" id="chat-name" placeholder="名前 (省略可)">
+            <select id="chat-game-select">
+                <option value="">ゲーム指定なし</option>
+            </select>
+            <textarea id="chat-message" placeholder="メッセージを入力... (Enterで送信)" rows="2"></textarea>
+            <button class="btn-save" style="width: 100%; justify-content: center;" onclick="App.sendChatMessage()">送信</button>
+        </div>
+    </div>
+
+    <script>
+    /**
+     * ========================================
+     * Tool Launcher Pro - Core Module
+     * ========================================
+     */
+    const App = (function() {
+        'use strict';
+
+        // --- Constants & Defaults ---
+        const DEFAULT_SERVER_CONFIG = {
+            bgImage: '',
+            categoryOrder: []
+        };
+
+        const DEFAULT_LOCAL_CONFIG = {
+            gridSize: '240px',
+            clockFormat: '24h',
+            accentColor: '#00e6e6',
+            borderRadius: '8px',
+            cardGap: '20px',
+            showTitle: true,
+            openInNewTab: true,
+            enableAnimations: true,
+            isLightMode: false
+        };
+
+        const CATEGORY_LABELS = {
+            action: 'アクション', puzzle: 'パズル', rpg: 'RPG',
+            shooter: 'シューティング', sports: 'スポーツ',
+            strategy: 'ストラテジー', casual: 'カジュアル', retro: 'レトロ'
+        };
+
+        // --- State ---
+        let serverConfig = { ...DEFAULT_SERVER_CONFIG };
+        let localConfig = JSON.parse(localStorage.getItem('tool_local_config')) || { ...DEFAULT_LOCAL_CONFIG };
+        
+        let games = [];
+        let customStamps = [];
+        const defaultStamps = ['👍', '❤️', '😂', '😢', '🎉'];
+
+        async function fetchStamps() {
+            try {
+                const res = await fetch('post_stamps.php');
+                if (res.ok) {
+                    customStamps = await res.json();
+                    renderReactionPicker();
+                    renderSettingsStamps();
+                }
+            } catch(e) { console.error(e); }
+        }
+
+        function renderReactionPicker() {
+            const picker = document.getElementById('reaction-picker');
+            const allStamps = [...defaultStamps, ...customStamps];
+            picker.innerHTML = allStamps.map(s => `
+                <button class="picker-emoji" onclick="App.reactMessage('${escapeHtml(s)}')" style="background:none;border:none;cursor:pointer;font-size:18px;padding:4px;transition:transform 0.2s; display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px;" onmouseover="this.style.transform='scale(1.2)'" onmouseout="this.style.transform='scale(1)'">${App.renderStampContent(s)}</button>
+            `).join('');
+        }
+
+        function renderSettingsStamps() {
+            const list = document.getElementById('custom-stamps-list');
+            if(!list) return;
+            list.innerHTML = customStamps.map((s, index) => `
+                <div class="stamp-chip" style="display: flex; align-items: center; gap: 4px; padding: 4px 10px; background: rgba(128,128,128,0.1); border: 1px solid rgba(128,128,128,0.2); border-radius: 20px; font-size: 16px;">
+                    <span>${App.renderStampContent(s)}</span>
+                    <button onclick="App.deleteCustomStamp(${index})" style="background: none; border: none; color: #ff5252; cursor: pointer; padding: 0 4px; display: flex; align-items: center; justify-content: center;">&times;</button>
+                </div>
+            `).join('');
+        }
+
+                function renderStampContent(s) {
+            if (s.startsWith('uploads/') || s.startsWith('http://') || s.startsWith('https://')) {
+                return `<img src="${escapeHtml(s)}" style="max-height: 24px; max-width: 24px; vertical-align: middle; border-radius: 4px;" alt="stamp">`;
+            }
+            return escapeHtml(s);
+        }
+
+        async function uploadCustomImageStamp(file) {
+            if (!file) return;
+            const formData = new FormData();
+            formData.append('image', file);
+            try {
+                showToast('画像をアップロード中...', 'info');
+                const res = await fetch('./post_stamps.php?action=upload_image', {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await res.json();
+                if (data.status === 'success') {
+                    customStamps.push(data.url);
+                    await saveCustomStamps();
+                    showToast('画像スタンプを追加しました', 'success');
+                } else {
+                    showToast(data.message || '失敗しました', 'error');
+                }
+            } catch(e) {
+                console.error(e);
+                showToast('エラー', 'error');
+            }
+        }
+
+        function addCustomImageStamp(event) {
+            const file = event.target.files[0];
+            if (file) uploadCustomImageStamp(file);
+            event.target.value = '';
+        }
+
+        async function addCustomStamp() {
+            const input = document.getElementById('new-stamp-input');
+            const val = input.value.trim();
+            if(!val) return;
+            if(defaultStamps.includes(val) || customStamps.includes(val)) {
+                showToast('既に存在するスタンプです', 'error');
+                return;
+            }
+            customStamps.push(val);
+            input.value = '';
+            await saveCustomStamps();
+        }
+
+        async function deleteCustomStamp(index) {
+            customStamps.splice(index, 1);
+            await saveCustomStamps();
+        }
+
+        async function saveCustomStamps() {
+            try {
+                const res = await fetch('post_stamps.php', {
+                    method: 'POST',
+                    body: JSON.stringify(customStamps)
+                });
+                if(res.ok) {
+                    renderReactionPicker();
+                    renderSettingsStamps();
+                    showToast('スタンプを保存しました');
+                }
+            } catch(e) { console.error(e); }
+        }
+        let filteredGames = [];
+        let dragStartIndex = null;
+        let categoryDragStartIndex = null;
+        let focusedCardIndex = -1;
+        let currentCategory = 'all';
+        let isRankingActive = false;
+        let serverTimestamps = null;
+        let isSaving = false;
+        
+        // Chat state
+        let chatMessages = [];
+        let shareMessages = [];
+        let initialShareLoaded = false;
+        let chatSidebarOpen = false;
+        let initialChatLoaded = false;
+        let myClientId = localStorage.getItem('tool_client_id');
+        if (!myClientId) {
+            myClientId = 'client_' + Math.random().toString(36).substr(2, 9);
+            localStorage.setItem('tool_client_id', myClientId);
+        }
+
+        // --- DOM Elements ---
+        const els = {};
+
+        // --- Utilities ---
+
+        function getUniqueUserId() {
+            let userId = localStorage.getItem('tool_user_id');
+            if (!userId) {
+                userId = 'u_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+                localStorage.setItem('tool_user_id', userId);
+            }
+            return userId;
+        }
+
+        function escapeHtml(str) {
+            if (typeof str !== 'string') return '';
+            const div = document.createElement('div');
+            div.textContent = str;
+            return div.innerHTML;
+        }
+
+        function showToast(message, type = 'info', duration = 3000) {
+            const container = document.getElementById('toast-container');
+            const toast = document.createElement('div');
+            toast.className = `toast ${type}`;
+
+            const icons = { info: 'ℹ️', success: '✅', error: '❌', warning: '⚠️' };
+            toast.innerHTML = `<span class="toast-icon">${icons[type] || icons.info}</span><span>${escapeHtml(message)}</span>`;
+
+            container.appendChild(toast);
+            requestAnimationFrame(() => toast.classList.add('show'));
+
+            const tId = setTimeout(() => {
+                toast.classList.remove('show');
+                setTimeout(() => toast.remove(), 300);
+            }, duration);
+
+            toast.onclick = () => {
+                clearTimeout(tId);
+                toast.classList.remove('show');
+                setTimeout(() => toast.remove(), 300);
+            };
+        }
+
+        function showChatNotification(msg, isShare = false) {
+            const container = document.getElementById('chat-notification-container');
+            const notif = document.createElement('div');
+            notif.className = 'chat-notification';
+            
+            // Generate a unique key for caching this active notification
+            const notifId = (isShare ? 'share_' : 'chat_') + (msg.id || ('temp_' + msg.timestamp));
+
+            // Check if already exists in DOM
+            if (document.getElementById('notif-' + notifId)) return;
+
+            notif.id = 'notif-' + notifId;
+            
+            const timeStr = new Date(msg.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+            const name = msg.name || '名無しさん';
+            
+            notif.dataset.timestamp = msg.timestamp;
+            notif.dataset.name = name;
+            notif.dataset.messageText = msg.message;
+            if (isShare) notif.dataset.isShare = 'true';
+            
+            let gameHtml = '';
+            if (msg.gameId) {
+                const game = games.find(g => g.id == msg.gameId);
+                if (game) {
+                    gameHtml = `<div class="chat-notification-game">🎮 ${escapeHtml(game.name)}</div>`;
+                }
+            }
+
+            let imgHtml = '';
+            if (msg.imageUrl) {
+                imgHtml = `<div style="margin-top: 6px; margin-bottom: 4px;"><img src="${escapeHtml(msg.imageUrl)}" style="max-height: 240px; max-width: 100%; border-radius: 6px; border: 1px solid rgba(128,128,128,0.2); pointer-events: none;" alt="Image"></div>`;
+            }
+
+            notif.innerHTML = `
+                ${msg.replyTo ? `<div class="replied-message" style="margin-bottom: 4px;">
+                    <strong>@${escapeHtml(msg.replyTo.name)}</strong>&nbsp; ${escapeHtml(msg.replyTo.message)}
+                </div>` : ''}
+                <div class="chat-notification-header" style="position: relative; padding-right: 20px;">
+                    <span class="chat-notification-name">${escapeHtml(name)}</span>
+                    <span>${timeStr}</span>
+                    <button class="notif-close-btn" title="閉じる" style="position: absolute; right: -8px; top: -4px; background: none; border: none; color: inherit; font-size: 18px; cursor: pointer; padding: 4px; line-height: 1; opacity: 0.6;">&times;</button>
+                </div>
+                ${gameHtml}
+                ${(() => { let msgText = msg.message || ''; if (msgText === '') return ''; if (msgText.toLowerCase().startsWith('/a')) { return `<div class="chat-notification-text aa-font">${escapeHtml(msgText.replace(/^\/a(?:\r?\n| )?/i, ''))}</div>`; } return `<div class="chat-notification-text">${escapeHtml(msgText)}</div>`; })()}
+                ${imgHtml}
+            `;
+
+            const removeFromCache = () => {
+                let activeNotifs = JSON.parse(localStorage.getItem('activeChatNotifs_tool') || '{}');
+                delete activeNotifs[notifId];
+                localStorage.setItem('activeChatNotifs_tool', JSON.stringify(activeNotifs));
+            };
+
+            const closeBtn = notif.querySelector('.notif-close-btn');
+            if (closeBtn) {
+                closeBtn.onclick = (e) => {
+                    e.stopPropagation();
+                    notif.classList.add('hiding');
+                    setTimeout(() => notif.remove(), 300);
+                    removeFromCache();
+                    const storageKey = isShare ? 'dismissedShareNotifs' : 'dismissedChatNotifs';
+                    let dismissed = JSON.parse(localStorage.getItem(storageKey) || '[]');
+                    if (!dismissed.includes(msg.id)) {
+                        dismissed.push(msg.id);
+                        if (dismissed.length > 200) dismissed = dismissed.slice(-200);
+                        localStorage.setItem(storageKey, JSON.stringify(dismissed));
+                    }
+                };
+            }
+
+            notif.onclick = (e) => {
+                e.stopPropagation();
+                notif.classList.add('hiding');
+                setTimeout(() => notif.remove(), 300);
+                removeFromCache();
+                const storageKey = isShare ? 'dismissedShareNotifs' : 'dismissedChatNotifs';
+                let dismissed = JSON.parse(localStorage.getItem(storageKey) || '[]');
+                if (!dismissed.includes(msg.id)) {
+                    dismissed.push(msg.id);
+                    if (dismissed.length > 200) dismissed = dismissed.slice(-200);
+                    localStorage.setItem(storageKey, JSON.stringify(dismissed));
+                }
+                if (msg.gameId) {
+                    openChatGame(msg.gameId);
+                }
+            };
+
+            // Save to active notifications cache
+            let activeNotifs = JSON.parse(localStorage.getItem('activeChatNotifs_tool') || '{}');
+            activeNotifs[notifId] = { msg, isShare, timestamp: Date.now() };
+            // Prune very old active notifications (e.g., older than 3 days)
+            const threeDaysAgo = Date.now() - 3 * 24 * 60 * 60 * 1000;
+            for (let key in activeNotifs) {
+                if (activeNotifs[key].timestamp < threeDaysAgo) delete activeNotifs[key];
+            }
+            localStorage.setItem('activeChatNotifs_tool', JSON.stringify(activeNotifs));
+
+            container.prepend(notif);
+
+            // AA Auto-scaling for notification
+            const aaEl = notif.querySelector('.chat-notification-text.aa-font');
+            if (aaEl) {
+                requestAnimationFrame(() => {
+                    aaEl.style.zoom = 1;
+                    const maxW = window.innerWidth * 0.85;
+                    const maxH = window.innerHeight * 0.85;
+                    const scaleW = maxW / aaEl.scrollWidth;
+                    const scaleH = maxH / aaEl.scrollHeight;
+                    const scale = Math.min(1, scaleW, scaleH) * 0.98;
+                    if (scale < 1) {
+                        aaEl.style.zoom = scale;
+                        aaEl.style.overflow = 'hidden';
+                    }
+                });
+            }
+
+            // Ensure notification can scroll if it's too large
+            setTimeout(() => notif.classList.add('show'), 10);
+        }
+
+        function restoreActiveNotifications() {
+            const activeNotifs = JSON.parse(localStorage.getItem('activeChatNotifs_tool') || '{}');
+            // Sort by timestamp to preserve order
+            const sorted = Object.values(activeNotifs).sort((a, b) => a.msg.timestamp - b.msg.timestamp);
+            sorted.forEach(item => {
+                // If it's already shown (shouldn't happen on init but just in case), skip
+                if (document.getElementById('notif-' + (item.isShare ? 'share_' : 'chat_') + item.msg.id)) return;
+                showChatNotification(item.msg, item.isShare);
+            });
+        }
+
+        function hexToRgb(hex) {
+            hex = hex.replace('#', '');
+            if (hex.length === 3) hex = hex.split('').map(c => c + c).join('');
+            const r = parseInt(hex.substring(0, 2), 16);
+            const g = parseInt(hex.substring(2, 4), 16);
+            const b = parseInt(hex.substring(4, 6), 16);
+            return `${r}, ${g}, ${b}`;
+        }
+
+        function generateHash(str) {
+            let hash = 0;
+            for (let i = 0; i < str.length; i++) {
+                hash = str.charCodeAt(i) + ((hash << 5) - hash);
+            }
+            return hash;
+        }
+
+        function generatePlaceholderImage(title) {
+            const canvas = document.createElement('canvas');
+            canvas.width = 400; 
+            canvas.height = 225;
+            const ctx = canvas.getContext('2d');
+            const hash = generateHash(title);
+
+            const c1 = (hash & 0x00FFFFFF).toString(16).toUpperCase().padStart(6, '0');
+            const c2 = ((hash >> 1) & 0x00FFFFFF).toString(16).toUpperCase().padStart(6, '0');
+
+            const gradient = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
+            gradient.addColorStop(0, '#' + c1);
+            gradient.addColorStop(1, '#' + c2);
+            ctx.fillStyle = gradient;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            ctx.fillStyle = '#ffffff';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.font = "bold 100px 'Segoe UI', sans-serif";
+            ctx.shadowColor = 'rgba(0, 0, 0, 0.5)';
+            ctx.shadowBlur = 20;
+            ctx.shadowOffsetX = 4;
+            ctx.shadowOffsetY = 4;
+
+            const initials = title.substring(0, Math.min(title.length, 2)).toUpperCase();
+            ctx.fillText(initials, canvas.width / 2, canvas.height / 2);
+            return canvas.toDataURL('image/png');
+        }
+
+        // --- Server Communication ---
+
+        async function saveGamesToServer() {
+            isSaving = true;
+            try {
+                const response = await fetch('./save_games.php', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(games)
+                });
+                const data = await response.json();
+                if (data.status !== 'success') throw new Error(data.message);
+                
+                try {
+                    const tsRes = await fetch('./check_timestamp.php?t=' + Date.now());
+                    if (tsRes.ok) serverTimestamps = await tsRes.json();
+                } catch(e) {}
+                isSaving = false;
+                
+                return true;
+            } catch (error) {
+                console.error('Save error:', error);
+                showToast('サーバー保存に失敗: ' + error.message, 'error', 5000);
+                isSaving = false;
+                return false;
+            }
+        }
+
+        async function saveConfigToServer() {
+            isSaving = true;
+            try {
+                const response = await fetch('./save_config.php', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(serverConfig)
+                });
+                const data = await response.json();
+                if (data.status !== 'success') throw new Error(data.message);
+                showToast('設定を保存しました', 'success');
+                
+                try {
+                    const tsRes = await fetch('./check_timestamp.php?t=' + Date.now());
+                    if (tsRes.ok) serverTimestamps = await tsRes.json();
+                } catch(e) {}
+                isSaving = false;
+                
+                return true;
+            } catch (error) {
+                console.error('Config save error:', error);
+                showToast('設定の保存に失敗: ' + error.message, 'error', 5000);
+                isSaving = false;
+                return false;
+            }
+        }
+
+        // --- Chat Functionality ---
+
+        async function fetchChat() {
+            try {
+                const res = await fetch('./chat.json?t=' + Date.now());
+                if (res.ok) {
+                    const newMessages = await res.json();
+                    if (JSON.stringify(newMessages) !== JSON.stringify(chatMessages)) {
+                        // Remove notifications for deleted messages
+                        document.querySelectorAll('.chat-notification').forEach(notif => {
+                            if (notif.dataset.isShare === 'true') return;
+                            const ts = parseInt(notif.dataset.timestamp);
+                            const nName = notif.dataset.name;
+                            const nMsg = notif.dataset.messageText;
+                            if (ts && !newMessages.some(m => 
+                                (m.timestamp === ts) || 
+                                (m.name === nName && m.message === nMsg)
+                            )) {
+                                notif.classList.add('hiding');
+                                setTimeout(() => notif.remove(), 300);
+                            }
+                        });
+
+                        // Check for new messages from others
+                        if (initialChatLoaded) {
+                            const newItems = newMessages.filter(m => !chatMessages.some(old => old.id === m.id) && m.clientId !== myClientId);
+                            newItems.forEach(msg => {
+                                showChatNotification(msg);
+                            });
+                        } else {
+                            let dismissed = JSON.parse(localStorage.getItem('dismissedChatNotifs') || '[]');
+                            newMessages.forEach(msg => {
+                                if (msg.clientId !== myClientId && !dismissed.includes(msg.id)) {
+                                    showChatNotification(msg);
+                                }
+                            });
+                        }
+                        chatMessages = newMessages;
+                        initialChatLoaded = true;
+                        renderChat();
+                    } else {
+                        initialChatLoaded = true;
+                    }
+                }
+            } catch (e) {
+                // Silently fail if chat not ready
+            }
+        }
+
+        function renderChat() {
+            const container = document.getElementById('chat-messages');
+            if (!container) return;
+            
+            if (chatMessages.length === 0) {
+                container.innerHTML = '<div style="text-align: center; color: #888; font-size: 13px; margin-top: 20px;">まだメッセージはありません<br>一緒に遊ぶ人を募集してみましょう！</div>';
+                return;
+            }
+
+            let html = '';
+            chatMessages.forEach(msg => {
+                const timeStr = new Date(msg.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+                const name = msg.name || '名無しさん';
+                let gameHtml = '';
+                if (msg.gameId) {
+                    const game = games.find(g => g.id == msg.gameId);
+                    if (game) {
+                        gameHtml = `<div class="chat-message-game" onclick="App.openChatGame(${game.id})">🎮 ${escapeHtml(game.name)}</div>`;
+                    }
+                }
+                
+                html += `
+                    <div class="chat-message-item" id="msg-${msg.id}">
+                        ${msg.replyTo ? `<div class="replied-message">
+                            <strong>@${escapeHtml(msg.replyTo.name)}</strong>&nbsp; ${escapeHtml(msg.replyTo.message)}
+                        </div>` : ''}
+                        <div class="chat-message-header" style="display: flex; justify-content: space-between; font-size: 11px; color: #888; margin-bottom: 3px; align-items: center;">
+                            <div>
+                                <span class="chat-message-name">${escapeHtml(name)}</span>
+                                
+                                <span>${timeStr}</span>
+                            </div>
+                            <button onclick="App.deleteChatMessage(${msg.timestamp})" title="削除" style="background: none; border: none; color: #ff5252; cursor: pointer; font-size: 14px; padding: 0 4px; opacity: 0.6;">×</button>
+                        </div>
+                        ${gameHtml}
+                        ${(() => { let msgText = msg.message || ''; if (msgText === '') return ''; if (msgText.toLowerCase().startsWith('/a')) { return `<div class="chat-message-text aa-font">${escapeHtml(msgText.replace(/^\/a(?:\r?\n| )?/i, ''))}</div>`; } return `<div class="chat-message-text">${escapeHtml(msgText)}</div>`; })()}
+                        ${msg.imageUrl ? `<div style="margin-top: 8px;"><a href="${escapeHtml(msg.imageUrl)}" target="_blank"><img src="${escapeHtml(msg.imageUrl)}" style="max-width: 50%; border-radius: 8px; border: 1px solid rgba(255,255,255,0.1);" alt="Image"></a></div>` : ''}
+                        
+                        <div style="display: flex; gap: 4px; margin-top: 6px; flex-wrap: wrap;">
+                            ${Object.keys(msg.reactions || {}).map(emoji => {
+                                const count = msg.reactions[emoji].length;
+                                const reacted = msg.reactions[emoji].includes(myClientId);
+                                if (count === 0) return '';
+                                return `<button class="reaction-btn ${reacted ? 'reacted' : ''}" onclick="App.reactMessage('${emoji}', ${msg.timestamp}, false)">${App.renderStampContent(emoji)} <span>${count}</span></button>`;
+                            }).join('')}
+                            <button class="add-reaction-btn reaction-btn" style="width: 24px; justify-content: center;" onclick="App.toggleReactionPicker(${msg.timestamp}, false, this, event)">+</button>
+                            <button class="reaction-btn" style="width: 24px; justify-content: center;" onclick="App.startReply(false, ${msg.timestamp})" title="返信">↩</button>
+                        </div>
+                    </div>
+                `;
+            });
+            container.innerHTML = html;
+            
+            // AA Auto-scaling to fit within a defined box
+            requestAnimationFrame(() => {
+                container.querySelectorAll('.chat-message-text.aa-font').forEach(el => {
+                    // Reset zoom to measure original size
+                    el.style.zoom = 1;
+                    const parentW = el.parentElement.clientWidth;
+                    const maxW = parentW - 24; // Parent width minus padding
+                    const maxH = 250; // Defined box height
+
+                    const scaleW = maxW / el.scrollWidth;
+                    const scaleH = maxH / el.scrollHeight;
+
+                    // Scale down with a 2% safety margin to prevent 1px scrollbars
+                    const scale = Math.min(1, scaleW, scaleH) * 0.98;
+                    
+                    if (scale < 1) {
+                        el.style.zoom = scale;
+                        el.style.overflow = 'hidden';
+                    }
+                });
+            });
+
+            // Scroll to bottom
+            setTimeout(() => {
+                container.scrollTop = container.scrollHeight;
+            }, 10);
+        }
+
+        function openChat() {
+            document.body.classList.add('chat-open');
+            document.getElementById('chat-sidebar').classList.add('active');
+            
+            // Populate game select
+            const select = document.getElementById('chat-game-select');
+            let options = '<option value="">ゲーム指定なし</option>';
+            games.forEach(g => {
+                options += `<option value="${g.id}">${escapeHtml(g.name)}</option>`;
+            });
+            select.innerHTML = options;
+            
+            // Restore name
+            let savedName = localStorage.getItem('chat_name');
+            if (savedName === '名無しさん') {
+                localStorage.removeItem('chat_name');
+                savedName = null;
+            }
+            if (savedName) {
+                document.getElementById('chat-name').value = savedName;
+            } else {
+                document.getElementById('chat-name').value = '';
+            }
+
+            fetchChat();
+        }
+
+        function closeChat() {
+            document.body.classList.remove('chat-open');
+            document.getElementById('chat-sidebar').classList.remove('active');
+        }
+
+        async function sendChatMessage() {
+            const nameInput = document.getElementById('chat-name');
+            const msgInput = document.getElementById('chat-message');
+            const gameSelect = document.getElementById('chat-game-select');
+            
+            let inputName = nameInput.value.trim();
+            const message = msgInput.value.trim();
+            const gameId = gameSelect.value ? parseInt(gameSelect.value, 10) : null;
+            if (!message) return;
+            
+            const isAa = message.toLowerCase().startsWith('/a');
+            
+            if (isAa) {
+                const lines = message.split('\n');
+                if (lines.some(line => line.trim().length > 1000)) {
+                    showToast("アスキーアートの1行の最大文字数は1000文字までです", "error");
+                    return;
+                }
+            } else if (message.length > 300) {
+                showToast("通常チャットの最大文字数は300文字です", "error");
+                return;
+            }
+            
+            const lineCount = (message.match(/\n/g) || []).length + 1;
+            if (lineCount >= 5 && !isAa) {
+                showToast("AA（アスキーアート）を送信する場合は先頭に /a を付けてください", "error");
+                msgInput.value = '';
+                msgInput.style.height = 'auto';
+                return;
+            }
+            if (inputName && inputName !== '名無しさん') {
+                localStorage.setItem('chat_name', inputName);
+            } else {
+                localStorage.removeItem('chat_name');
+            }
+            let name = inputName || '名無しさん';
+            
+            // Optimistic update
+            const tempMsg = {
+                id: 'temp_' + Date.now(),
+                name: name,
+                message: message,
+                gameId: gameId,
+                timestamp: Date.now(),
+                clientId: myClientId,
+                replyTo: currentReplyToChat
+            };
+            chatMessages.push(tempMsg);
+            renderChat();
+            
+            msgInput.value = '';
+            msgInput.style.height = 'auto';
+            
+            try {
+                const res = await fetch('./post_chat.php', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name, message, gameId, clientId: myClientId, replyTo: currentReplyToChat })
+                });
+                cancelReply(false);
+                if (res.ok) {
+                    showChatNotification(tempMsg);
+                    fetchChat();
+                } else {
+                    showToast('チャット送信失敗', 'error');
+                }
+            } catch (e) {
+                showToast('通信エラー', 'error');
+            }
+        }
+
+        function openChatGame(id) {
+            const game = games.find(g => g.id == id);
+            if (game) {
+                launchGame(game);
+            }
+        }
+
+        // --- Rendering ---
+
+        function renderFilters() {
+            // Category filter
+            const catContainer = document.getElementById('category-filter');
+            const availableCategories = Array.from(new Set(games.map(g => g.category).filter(Boolean)));
+            
+            // サーバーから取得した順序に基づいて並び替え
+            const sortedCategories = [...availableCategories].sort((a, b) => {
+                const orderA = serverConfig.categoryOrder ? serverConfig.categoryOrder.indexOf(a) : -1;
+                const orderB = serverConfig.categoryOrder ? serverConfig.categoryOrder.indexOf(b) : -1;
+                
+                if (orderA === -1 && orderB === -1) return a.localeCompare(b);
+                if (orderA === -1) return 1;
+                if (orderB === -1) return -1;
+                return orderA - orderB;
+            });
+
+            let catHtml = `<div class="category-chip ${currentCategory === 'all' ? 'active' : ''}" data-cat="all" onclick="App.setCategory('all')">すべて</div>`;
+            
+            sortedCategories.forEach((cat, idx) => {
+                const label = CATEGORY_LABELS[cat] || cat;
+                const isActive = currentCategory === cat;
+                catHtml += `
+                    <div class="category-chip ${isActive ? 'active' : ''}" 
+                         data-cat="${escapeHtml(cat)}" 
+                         draggable="true"
+                         oncontextmenu="return false;"
+                         onclick="App.setCategory('${escapeHtml(cat)}')"
+                         ondragstart="App.handleCategoryDragStart(event, ${idx})"
+                         ondragover="App.handleCategoryDragOver(event)"
+                         ondrop="App.handleCategoryDrop(event, ${idx})"
+                         ondragend="App.handleCategoryDragEnd(event)">
+                        ${escapeHtml(label)}
+                    </div>`;
+            });
+            catContainer.innerHTML = catHtml;
+
+            // Ranking Toggle (Separate from categories)
+            const rankingContainer = document.getElementById('ranking-toggle-container');
+            if (rankingContainer) {
+                rankingContainer.innerHTML = `
+                    <div class="category-chip ${isRankingActive ? 'active' : ''}" onclick="App.toggleRanking()" style="margin-left: 0; margin-right: 12px; border-color: rgba(255, 215, 0, 0.4);">
+                        🏆 ランキング
+                    </div>
+                `;
+            }
+
+            // Player filter
+            const playerContainer = document.getElementById('player-filter');
+            let playerHtml = `<div class="player-chip ${currentPlayerFilter === 'all' ? 'active' : ''}" data-players="all" onclick="App.setPlayerFilter('all')">全人数</div>`;
+
+            const filterOptions = [
+                { id: '1', label: '1人', isMulti: false },
+                { id: '2', label: '2人', isMulti: true },
+                { id: '3', label: '3人', isMulti: true },
+                { id: '4', label: '4人', isMulti: true },
+                { id: '5plus', label: '5人以上', isMulti: true }
+            ];
+
+            filterOptions.forEach(opt => {
+                const isActive = currentPlayerFilter === opt.id;
+                playerHtml += `<div class="player-chip ${opt.isMulti ? 'multi' : ''} ${isActive ? 'active' : ''}" data-players="${opt.id}" onclick="App.setPlayerFilter('${opt.id}')">${escapeHtml(opt.label)}</div>`;
+            });
+            playerContainer.innerHTML = playerHtml;
+        }
+
+        function renderGames() {
+            const grid = els.grid;
+            grid.innerHTML = '';
+
+            const searchTerm = els.searchInput.value.toLowerCase().trim();
+            
+            filteredGames = games.filter(game => {
+                const matchesSearch = !searchTerm || game.name.toLowerCase().includes(searchTerm);
+                const matchesCategory = currentCategory === 'all' || game.category === currentCategory;
+
+                let matchesPlayers = true;
+                if (currentPlayerFilter !== 'all') {
+                    const gameMin = parseInt(game.playersMin, 10) || 0;
+                    const gameMax = parseInt(game.playersMax, 10) || 0;
+                    
+                    if (gameMin === 0 && gameMax === 0) {
+                        matchesPlayers = false; 
+                    } else {
+                        const gMin = gameMin || 1;
+                        const gMax = gameMax || gMin;
+                        
+                        if (currentPlayerFilter === '5plus') {
+                            matchesPlayers = (gMax >= 5);
+                        } else {
+                            const target = parseInt(currentPlayerFilter, 10);
+                            matchesPlayers = (target >= gMin && target <= gMax);
+                        }
+                    }
+                }
+
+                return matchesSearch && matchesCategory && matchesPlayers;
+            });
+
+            if (isRankingActive) {
+                // ランキング有効時はプレイ回数順（降順）
+                filteredGames.sort((a, b) => (b.playCount || 0) - (a.playCount || 0));
+            } else { filteredGames.sort((a, b) => { if (a.isPinned && !b.isPinned) return -1; if (!a.isPinned && b.isPinned) return 1; if (a.hasUpdate && !b.hasUpdate) return -1; if (!a.hasUpdate && b.hasUpdate) return 1; return (b.lastPlayed || 0) - (a.lastPlayed || 0); }); }
+
+            if (filteredGames.length === 0 && games.length > 0) {
+                grid.innerHTML = `
+                    <div class="empty-state">
+                        <div class="empty-state-icon">🔍</div>
+                        <div class="empty-state-text">該当するゲームが見つかりません</div>
+                        <div class="empty-state-hint">検索条件を変更するか、新しいゲームを追加してください</div>
+                    </div>`;
+                return;
+            }
+
+            const fragment = document.createDocumentFragment();
+
+            filteredGames.forEach((game, index) => {
+                const card = document.createElement('div');
+                card.className = 'game-card' + (game.isPinned ? ' pinned' : '');
+                card.dataset.index = index;
+                card.dataset.id = game.id;
+                card.draggable = true;
+                card.tabIndex = 0;
+                card.setAttribute('role', 'button');
+                card.setAttribute('aria-label', `${game.name}、Enterで起動`);
+
+                // Events for Drag & Drop
+                card.addEventListener('dragstart', e => handleDragStart(e, index));
+                card.addEventListener('dragover', handleDragOver);
+                card.addEventListener('drop', e => handleDrop(e, index));
+                card.addEventListener('dragenter', handleDragEnter);
+                card.addEventListener('dragleave', handleDragLeave);
+                card.addEventListener('dragend', handleDragEnd);
+                
+                card.addEventListener('keydown', e => handleCardKeydown(e, index));
+                card.addEventListener('focus', () => { focusedCardIndex = index; card.classList.add('focused'); });
+                card.addEventListener('blur', () => card.classList.remove('focused'));
+
+                card.addEventListener('click', e => {
+                    if (e.target.closest('.edit-btn') || e.target.closest('.pin-btn')) return;
+                    launchGame(game);
+                });
+
+                // --- UPDATE / NEW / PINNED Badge Logic ---
+                const readHistory = JSON.parse(localStorage.getItem('toolReadHistory')) || {};
+                const lastReadTime = readHistory[game.id] || 0;
+
+                const createdAtMs = game.createdAt ? (game.createdAt > 9999999999 ? game.createdAt : game.createdAt * 1000) : 0;
+                const remoteUpdatedMs = game.remoteUpdatedAt ? (game.remoteUpdatedAt > 9999999999 ? game.remoteUpdatedAt : game.remoteUpdatedAt * 1000) : 0;
+                const manualUpdatedMs = game.updatedAt ? (game.updatedAt > 9999999999 ? game.updatedAt : game.updatedAt * 1000) : 0;
+                const latestUpdateMs = Math.max(remoteUpdatedMs, manualUpdatedMs);
+
+                const isActuallyUpdated = (latestUpdateMs - createdAtMs) > 1000;
+                const isNew = createdAtMs && (Date.now() - createdAtMs < 7 * 24 * 60 * 60 * 1000) && (lastReadTime < createdAtMs);
+                const isUpdate = (lastReadTime < latestUpdateMs) && (isActuallyUpdated || game.hasUpdate);
+
+                let badge = '';
+                if (isUpdate) {
+                    badge = '<span class="card-badge" style="background: var(--warning-color); color: #000;">UPDATE</span>';
+                } else if (isNew) {
+                    badge = '<span class="card-badge new">NEW</span>';
+                }
+                
+                // --- Active Badge Logic ---
+                const now = Date.now();
+                const lastPlayed = game.lastPlayed || 0;
+                const diffMs = now - lastPlayed;
+                let activeBadge = '';
+                if (isRankingActive) { const plays = game.playCount || 0; activeBadge = `<span class="active-badge" style="background: rgba(0, 0, 0, 0.8); color: #ffd700; border: 1px solid #ff4757; padding: 4px 8px; font-size: 12px; letter-spacing: 0.5px;">👑 ${plays}</span>`; } else if (lastPlayed > 0 && diffMs < 3600000) {
+                    const diffMins = Math.floor(diffMs / 60000);
+                    
+                    // ユニークユーザー数のカウント（過去1時間以内）
+                    let activeUserCount = 0;
+                    if (game.activeUsers) {
+                        const oneHourAgo = now - 3600000;
+                        activeUserCount = Object.values(game.activeUsers).filter(ts => ts > oneHourAgo).length;
+                    }
+                    // もしアクティブユーザーがいない（データ不整合など）場合は最低1人とする
+                    if (activeUserCount === 0) activeUserCount = 1;
+
+                    activeBadge = `
+                        <span class="active-badge">
+                            ${diffMins}分前アクティブ<br>
+                            <span style="font-size: 9px; opacity: 0.8;">(${activeUserCount}人)</span>
+                        </span>`;
+                }
+
+                const catLabel = game.category ? (CATEGORY_LABELS[game.category] || game.category) : '';
+                const catHtml = catLabel ? `<div class="card-category">${escapeHtml(catLabel)}</div>` : '';
+
+                const imgUrl = game.image || generatePlaceholderImage(game.name);
+
+                let playerBadge = '';
+                if (game.playersMin || game.playersMax) {
+                    const min = game.playersMin ? parseInt(game.playersMin, 10) : null;
+                    const max = game.playersMax ? parseInt(game.playersMax, 10) : null;
+                    const isMulti = (min && min > 1) || (max && max > 1) || (!min && max && max > 1);
+
+                    let label = '';
+                    if (min && max) {
+                        if (min === max) {
+                            label = min >= 999 ? '♾️' : min + '人';
+                        } else {
+                            const maxLabel = max >= 999 ? '♾️' : max;
+                            label = min + '〜' + maxLabel + '人';
+                        }
+                    } else if (min) {
+                        label = min >= 999 ? '♾️' : min + '人〜';
+                    } else if (max) {
+                        label = max >= 999 ? '〜♾️' : '〜' + max + '人';
+                    }
+
+                    playerBadge = `<span class="player-badge ${isMulti ? 'multi' : ''}">${label}</span>`;
+                }
+
+                card.innerHTML = `
+                    ${badge}
+                    ${activeBadge}
+                    ${playerBadge}
+                    <button class="pin-btn" title="${game.isPinned ? '固定を解除' : '位置を固定'}" onclick="App.togglePin(${game.id}, event)">${game.isPinned ? '✖️' : '📌'}</button>
+                    <button class="edit-btn" title="編集" onclick="App.openGameModal(${game.id}, event)" aria-label="${escapeHtml(game.name)}を編集">✎</button>
+                    <img src="${escapeHtml(imgUrl)}" alt="" loading="lazy" onerror="this.src='${generatePlaceholderImage(game.name)}'" onload="this.classList.add('loaded')">
+                    <div class="title-bar" title="${escapeHtml(game.name)}">${escapeHtml(game.name)}</div>
+                    ${catHtml}
+                `;
+                fragment.appendChild(card);
+            });
+
+            // Add button
+            const addCard = document.createElement('div');
+            addCard.className = 'game-card add-card';
+            addCard.id = 'add-card-btn';
+            addCard.innerHTML = `
+                <div style="width: 100%; aspect-ratio: 16 / 9; flex-grow: 1;"></div>
+                <div class="title-bar" style="visibility: hidden;">..</div>
+                <div class="card-category" style="visibility: hidden;">..</div>
+                <div style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: flex; justify-content: center; align-items: center; font-size: 48px;">＋</div>
+            `;
+            addCard.title = "新しいゲームを追加 (N)";
+            addCard.setAttribute('role', 'button');
+            addCard.setAttribute('tabindex', '0');
+            addCard.setAttribute('aria-label', '新しいゲームを追加');
+            addCard.onclick = () => openGameModal();
+            addCard.addEventListener('keydown', e => { if (e.key === 'Enter') openGameModal(); });
+            fragment.appendChild(addCard);
+
+            grid.appendChild(fragment);
+            renderFilters();
+        }
+
+        // --- Pin Function ---
+        function togglePin(id, event) {
+            if (event) event.stopPropagation();
+            const index = games.findIndex(g => g.id == id);
+            if (index !== -1) {
+                games[index].isPinned = !games[index].isPinned;
+                games[index].updatedAt = Date.now();
+                showToast(games[index].isPinned ? 'ピン留めしました' : 'ピン留めを解除しました', 'success');
+                renderGames();
+                saveGamesToServer();
+            }
+        }
+
+        // --- Category Drag & Drop ---
+        function handleCategoryDragStart(e, index) {
+            categoryDragStartIndex = index;
+            e.currentTarget.classList.add('dragging');
+            e.dataTransfer.effectAllowed = 'move';
+        }
+
+        function handleCategoryDragOver(e) {
+            e.preventDefault();
+        }
+
+        function handleCategoryDrop(e, dropIndex) {
+            e.preventDefault();
+            if (categoryDragStartIndex === null || categoryDragStartIndex === dropIndex) return;
+
+            const availableCategories = Array.from(new Set(games.map(g => g.category).filter(Boolean)));
+            const sortedCategories = [...availableCategories].sort((a, b) => {
+                const orderA = serverConfig.categoryOrder ? serverConfig.categoryOrder.indexOf(a) : -1;
+                const orderB = serverConfig.categoryOrder ? serverConfig.categoryOrder.indexOf(b) : -1;
+                if (orderA === -1 && orderB === -1) return a.localeCompare(b);
+                if (orderA === -1) return 1;
+                if (orderB === -1) return -1;
+                return orderA - orderB;
+            });
+
+            const [movedItem] = sortedCategories.splice(categoryDragStartIndex, 1);
+            sortedCategories.splice(dropIndex, 0, movedItem);
+
+            serverConfig.categoryOrder = sortedCategories;
+            saveConfigToServer();
+            renderFilters();
+            showToast('カテゴリーの順序を更新しました', 'success');
+        }
+
+        function handleCategoryDragEnd(e) {
+            e.currentTarget.classList.remove('dragging');
+            categoryDragStartIndex = null;
+        }
+
+        // === プレイ時に順番を入れ替える（ピン留め以外） ===
+        function launchGame(game) {
+            if (!game.url) return;
+            window.open(game.url, localConfig.openInNewTab ? '_blank' : '_self', 'noopener,noreferrer');
+            
+            // 個人の既読時刻を記録
+            const readHistory = JSON.parse(localStorage.getItem('toolReadHistory')) || {};
+            readHistory[game.id] = Date.now();
+            localStorage.setItem('toolReadHistory', JSON.stringify(readHistory));
+
+            // プレイ回数をインクリメント
+            game.playCount = (game.playCount || 0) + 1;
+
+            // アクティブユーザー情報を更新（ユニークIDを使用）
+            const userId = getUniqueUserId();
+            if (!game.activeUsers || Array.isArray(game.activeUsers)) game.activeUsers = {}; 
+            game.activeUsers[userId] = Date.now();
+
+            // 1時間以上前の古いユーザーデータを削除して肥大化を防ぐ
+            const oneHourAgo = Date.now() - 3600000;
+            for (const id in game.activeUsers) {
+                if (game.activeUsers[id] < oneHourAgo) {
+                    delete game.activeUsers[id];
+                }
+            }
+
+            // ピン留めされていない場合のみ、先頭（ピン留めの下）に移動
+            if (!game.isPinned) {
+                const globalIndex = games.findIndex(g => g.id === game.id);
+                if (globalIndex > -1) {
+                    const [playedGame] = games.splice(globalIndex, 1);
+                    playedGame.lastPlayed = Date.now();
+                    playedGame.hasUpdate = false;
+                    
+                    // 最初の非ピン留めアイテムのインデックスを探す
+                    let insertIndex = 0;
+                    while (insertIndex < games.length && games[insertIndex].isPinned) {
+                        insertIndex++;
+                    }
+                    games.splice(insertIndex, 0, playedGame);
+                    
+                    saveGamesToServer();       
+                    renderGames();             
+                }
+            } else {
+                // ピン留めされている場合は時刻だけ更新
+                game.lastPlayed = Date.now();
+                game.hasUpdate = false;
+                saveGamesToServer();
+                renderGames();
+            }
+        }
+
+        function setCategory(cat) {
+            if (currentCategory === cat) {
+                currentCategory = 'all';
+            } else {
+                currentCategory = cat;
+            }
+            renderGames();
+        }
+
+        let currentPlayerFilter = 'all';
+
+        function setPlayerFilter(filter) {
+            currentPlayerFilter = filter;
+            renderGames();
+        }
+
+        // --- Drag & Drop (Games) ---
+
+        function handleDragStart(e, index) {
+            if (els.searchInput.value.trim() !== '' || currentCategory !== 'all' || currentPlayerFilter !== 'all') {
+                e.preventDefault();
+                showToast('検索中またはフィルタ中は並び替えできません', 'warning');
+                return;
+            }
+            dragStartIndex = index;
+            e.currentTarget.classList.add('dragging');
+            e.dataTransfer.effectAllowed = 'move';
+            e.dataTransfer.setData('text/plain', index);
+        }
+
+        function handleDragOver(e) { e.preventDefault(); }
+
+        function handleDragEnter(e) {
+            e.preventDefault();
+            const card = e.currentTarget;
+            if (!card.classList.contains('add-card') && !card.classList.contains('dragging')) {
+                card.style.transform = `scale(${localConfig.enableAnimations ? '1.02' : '1'})`;
+                card.style.borderColor = 'var(--focus-color)';
+            }
+        }
+
+        function handleDragLeave(e) {
+            const card = e.currentTarget;
+            if (!card.classList.contains('dragging')) {
+                card.style.transform = '';
+                card.style.borderColor = '';
+            }
+        }
+
+        function handleDrop(e, dropIndex) {
+            e.preventDefault();
+            const card = e.currentTarget;
+            card.style.transform = '';
+            card.style.borderColor = '';
+
+            if (dragStartIndex === null || dragStartIndex === dropIndex) return;
+
+            // フィルター適用後のリストを元に、元の games 配列を操作
+            const movedId = filteredGames[dragStartIndex].id;
+            const targetId = filteredGames[dropIndex].id;
+            
+            const fromIndex = games.findIndex(g => g.id === movedId);
+            const toIndex = games.findIndex(g => g.id === targetId);
+
+            const [item] = games.splice(fromIndex, 1);
+            games.splice(toIndex, 0, item);
+            
+            renderGames();
+            saveGamesToServer(); 
+            showToast('並び順を変更しました', 'success');
+        }
+
+        function handleDragEnd() {
+            document.querySelectorAll('.game-card').forEach(c => {
+                c.classList.remove('dragging');
+                c.style.transform = '';
+                c.style.borderColor = '';
+            });
+            dragStartIndex = null;
+        }
+
+        // --- Keyboard Navigation ---
+
+        function handleCardKeydown(e, index) {
+            const cards = document.querySelectorAll('.game-card:not(.add-card)');
+            const cols = Math.floor(els.grid.offsetWidth / (els.grid.children[0]?.offsetWidth || 240));
+
+            switch(e.key) {
+                case 'ArrowRight':
+                    e.preventDefault();
+                    if (index + 1 < cards.length) cards[index + 1].focus();
+                    break;
+                case 'ArrowLeft':
+                    e.preventDefault();
+                    if (index - 1 >= 0) cards[index - 1].focus();
+                    break;
+                case 'ArrowDown':
+                    e.preventDefault();
+                    if (index + cols < cards.length) cards[index + cols].focus();
+                    break;
+                case 'ArrowUp':
+                    e.preventDefault();
+                    if (index - cols >= 0) cards[index - cols].focus();
+                    break;
+                case 'Enter':
+                    e.preventDefault();
+                    launchGame(filteredGames[index]);
+                    break;
+                case 'Delete':
+                case 'd':
+                    if (e.key === 'd' && !e.ctrlKey) break;
+                    e.preventDefault();
+                    openGameModal(filteredGames[index].id);
+                    setTimeout(() => document.getElementById('btn-delete').click(), 100);
+                    break;
+            }
+        }
+
+        document.addEventListener('keydown', e => {
+            if (els.gameModal.classList.contains('active') || els.settingsModal.classList.contains('active')) return;
+
+
+            if (e.key === 'Escape') {
+                els.searchInput.value = '';
+                els.searchInput.blur();
+                currentPlayerFilter = 'all';
+                currentCategory = 'all';
+                renderGames();
+            }
+        });
+
+        // --- Modal Management ---
+
+        function openGameModal(id = null, event = null) {
+            if (event) event.stopPropagation();
+
+            const idInput = document.getElementById('game-id');
+            const nameInput = document.getElementById('game-name');
+            const urlInput = document.getElementById('game-url');
+            const imageInput = document.getElementById('game-image');
+            const categoryInput = document.getElementById('game-category');
+            const deleteBtn = document.getElementById('btn-delete');
+            const titleEl = document.getElementById('modal-title');
+
+            const defaultCategories = ['action', 'puzzle', 'rpg', 'shooter', 'sports', 'strategy', 'casual', 'retro'];
+            const allUsedCategories = new Set(games.map(g => g.category).filter(Boolean));
+            
+            let optionsHtml = `<option value="">未分類</option>`;
+            
+            defaultCategories.forEach(cat => {
+                optionsHtml += `<option value="${cat}">${CATEGORY_LABELS[cat]}</option>`;
+            });
+            
+            allUsedCategories.forEach(cat => {
+                if (!defaultCategories.includes(cat)) {
+                    optionsHtml += `<option value="${escapeHtml(cat)}">${escapeHtml(cat)}</option>`;
+                }
+            });
+            
+            optionsHtml += `<option value="__new__">＋ 新規カテゴリー...</option>`;
+            
+            categoryInput.innerHTML = optionsHtml;
+
+            if (id !== null) {
+                const game = games.find(g => g.id == id);
+                if (!game) return;
+                titleEl.textContent = 'ゲームを編集';
+                idInput.value = game.id;
+                nameInput.value = game.name;
+                urlInput.value = game.url;
+                imageInput.value = (game.image && !game.image.startsWith('data:')) ? game.image : '';
+                const existingOptions = Array.from(categoryInput.options).map(o => o.value);
+                if (game.category && !existingOptions.includes(game.category)) {
+                    categoryInput.value = '__new__';
+                    const newInput = document.getElementById('game-category-new');
+                    newInput.style.display = 'block';
+                    newInput.value = game.category;
+                } else {
+                    categoryInput.value = game.category || '';
+                    document.getElementById('game-category-new').style.display = 'none';
+                    document.getElementById('game-category-new').value = '';
+                }
+                document.getElementById('game-players-min').value = game.playersMin || '';
+                document.getElementById('game-players-max').value = game.playersMax || '';
+                deleteBtn.style.display = 'flex';
+                deleteBtn.onclick = () => deleteGame(id);
+            } else {
+                titleEl.textContent = 'ゲームを追加';
+                idInput.value = '';
+                nameInput.value = '';
+                urlInput.value = '';
+                imageInput.value = '';
+                categoryInput.value = '';
+                document.getElementById('game-category-new').style.display = 'none';
+                document.getElementById('game-category-new').value = '';
+                document.getElementById('game-players-min').value = '';
+                document.getElementById('game-players-max').value = '';
+                deleteBtn.style.display = 'none';
+            }
+
+            els.gameModal.classList.add('active');
+            setTimeout(() => nameInput.focus(), 100);
+        }
+
+        function closeGameModal() {
+            els.gameModal.classList.remove('active');
+            if (focusedCardIndex >= 0) {
+                const cards = document.querySelectorAll('.game-card:not(.add-card)');
+                if (cards[focusedCardIndex]) cards[focusedCardIndex].focus();
+            }
+        }
+
+        function saveGame() {
+            const idStr = document.getElementById('game-id').value;
+            const name = document.getElementById('game-name').value.trim();
+            const url = document.getElementById('game-url').value.trim();
+            let category = document.getElementById('game-category').value;
+            if (category === '__new__') {
+                category = document.getElementById('game-category-new').value.trim();
+            }
+            let image = document.getElementById('game-image').value.trim();
+
+            const playersMin = document.getElementById('game-players-min').value;
+            const playersMax = document.getElementById('game-players-max').value;
+
+            if (!name || !url) {
+                showToast('タイトルとURLは必須項目です', 'warning');
+                return;
+            }
+
+            if (idStr) {
+                const id = parseInt(idStr, 10);
+                const index = games.findIndex(g => g.id == id);
+                if (index !== -1) {
+                    if (!image) {
+                        image = (games[index].name !== name) ? generatePlaceholderImage(name) : games[index].image;
+                    }
+                    const updatedGame = { 
+                        ...games[index], 
+                        id, name, url, image, category, playersMin, playersMax,
+                        updatedAt: Date.now()
+                    };
+                    
+                    // 編集された場合は位置を維持
+                    games[index] = updatedGame;
+                    showToast('ゲームを更新しました', 'success');
+                }
+            } else {
+                if (!image) image = generatePlaceholderImage(name);
+                const newGame = {
+                    id: games.length > 0 ? Math.max(...games.map(g => g.id)) + 1 : 1,
+                    name, url, image, category, playersMin, playersMax,
+                    createdAt: Date.now(),
+                    updatedAt: Date.now(),
+                    isPinned: false
+                };
+                
+                // 新規ゲームを先頭（ピン留めの下）に追加
+                let insertIndex = 0;
+                while (insertIndex < games.length && games[insertIndex].isPinned) {
+                    insertIndex++;
+                }
+                games.splice(insertIndex, 0, newGame);
+                
+                showToast('ゲームを追加しました', 'success');
+            }
+
+            renderGames();
+            closeGameModal();
+            saveGamesToServer();
+        }
+
+        function deleteGame(id) {
+            const game = games.find(g => g.id == id);
+            if (game) {
+                games = games.filter(g => g.id !== id);
+                renderGames();
+                closeGameModal();
+                saveGamesToServer();
+                showToast('ゲームを削除しました', 'success');
+            }
+        }
+
+        function renderSettingsCategories() {
+            const container = document.getElementById('settings-category-list');
+            const categories = new Set(games.map(g => g.category).filter(Boolean));
+
+            if (categories.size === 0) {
+                container.innerHTML = '<span style="color:#666; font-size:12px;">現在使用されているカテゴリーはありません。</span>';
+                return;
+            }
+
+            let html = '';
+            categories.forEach(cat => {
+                const label = CATEGORY_LABELS[cat] || cat;
+                const safeCat = escapeHtml(cat).replace(/'/g, "\\'");
+                html += `
+                    <div class="category-manage-chip">
+                        <span>${escapeHtml(label)}</span>
+                        <button type="button" title="削除" onclick="App.deleteCategory('${safeCat}')">×</button>
+                    </div>
+                `;
+            });
+            container.innerHTML = html;
+        }
+
+        function deleteCategory(cat) {
+            const label = CATEGORY_LABELS[cat] || cat;
+            
+            let isUpdated = false;
+            games = games.map(g => {
+                if (g.category === cat) {
+                    isUpdated = true;
+                    return { ...g, category: '', updatedAt: Date.now() };
+                }
+                return g;
+            });
+
+            if (isUpdated) {
+                saveGamesToServer(); 
+                renderGames();       
+            }
+
+            if (currentCategory === cat) {
+                currentCategory = 'all';
+                renderGames();
+            }
+
+            renderSettingsCategories(); 
+            showToast(`カテゴリー「${label}」を削除しました`, 'success');
+        }
+
+        // --- Settings Management (Local & Server) ---
+
+        function openSettings() {
+            // Local Config
+            const currentSize = localConfig.gridSize || '240px';
+            const sizeSelect = document.getElementById('setting-grid-size');
+            const sizeCustom = document.getElementById('setting-grid-size-custom');
+            let sizeExists = Array.from(sizeSelect.options).some(opt => opt.value === currentSize);
+            
+            if (sizeExists) {
+                sizeSelect.value = currentSize;
+                sizeCustom.style.display = 'none';
+            } else {
+                sizeSelect.value = 'custom';
+                sizeCustom.style.display = 'block';
+                sizeCustom.value = parseInt(currentSize) || 240;
+            }
+
+            document.getElementById('setting-clock-format').value = localConfig.clockFormat || '24h';
+            document.getElementById('setting-accent-color').value = localConfig.accentColor || '#00e6e6';
+            document.getElementById('setting-border-radius').value = localConfig.borderRadius || '8px';
+            document.getElementById('setting-card-gap').value = localConfig.cardGap || '20px';
+            
+            document.getElementById('setting-show-title').checked = localConfig.showTitle ?? true;
+            document.getElementById('setting-new-tab').checked = localConfig.openInNewTab ?? true;
+            document.getElementById('setting-animations').checked = localConfig.enableAnimations ?? true;
+            document.getElementById('setting-light-mode').checked = localConfig.isLightMode ?? false;
+
+            // Server Config
+            document.getElementById('setting-bg-image').value = serverConfig.bgImage || '';
+
+            renderSettingsCategories();
+            els.settingsModal.classList.add('active');
+            loadServerBackups();
+
+        }
+
+        function closeSettings() {
+            els.settingsModal.classList.remove('active');
+        }
+
+        function saveSettings() {
+            // ローカル（個人）設定の保存
+            let newSize = document.getElementById('setting-grid-size').value;
+            if (newSize === 'custom') {
+                const customVal = document.getElementById('setting-grid-size-custom').value;
+                newSize = customVal ? `${customVal}px` : '240px';
+            }
+
+            localConfig = {
+                gridSize: newSize,
+                clockFormat: document.getElementById('setting-clock-format').value,
+                accentColor: document.getElementById('setting-accent-color').value,
+                borderRadius: document.getElementById('setting-border-radius').value,
+                cardGap: document.getElementById('setting-card-gap').value,
+                showTitle: document.getElementById('setting-show-title').checked,
+                openInNewTab: document.getElementById('setting-new-tab').checked,
+                enableAnimations: document.getElementById('setting-animations').checked,
+                isLightMode: document.getElementById('setting-light-mode').checked
+            };
+            localStorage.setItem('tool_local_config', JSON.stringify(localConfig));
+
+            // サーバー（全体）設定の保存
+            serverConfig = {
+                ...serverConfig,
+                bgImage: document.getElementById('setting-bg-image').value.trim()
+            };
+
+            saveConfigToServer();
+            applyConfig();
+            closeSettings();
+        }
+
+        function applyConfig() {
+            const root = document.documentElement;
+
+            // Apply Local Config
+            root.style.setProperty('--grid-min-width', localConfig.gridSize);
+            root.style.setProperty('--focus-color', localConfig.accentColor);
+            root.style.setProperty('--focus-color-rgb', hexToRgb(localConfig.accentColor));
+            root.style.setProperty('--card-radius', localConfig.borderRadius);
+            root.style.setProperty('--grid-gap', localConfig.cardGap);
+            root.style.setProperty('--hover-scale', localConfig.enableAnimations ? '1.04' : '1.0');
+            document.body.classList.toggle('hide-titles', !localConfig.showTitle);
+            document.body.classList.toggle('light-mode', localConfig.isLightMode === true);
+            
+            // Apply Server Config
+            document.body.style.backgroundImage = serverConfig.bgImage ? `url('${serverConfig.bgImage}')` : 'none';
+        }
+
+        // --- Data Management ---
+
+        function exportData() {
+            const a = document.createElement("a");
+            a.href = './manage_backups.php?action=export';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            showToast('ZIPエクスポートを開始しました', 'success');
+        }
+
+        function handleGridSizeChange() {
+            const val = document.getElementById('setting-grid-size').value;
+            document.getElementById('setting-grid-size-custom').style.display = (val === 'custom') ? 'block' : 'none';
+        }
+
+        async function importData(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            
+            if (file.name.endsWith('.json')) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    try {
+                        const imported = JSON.parse(e.target.result);
+                        if (Array.isArray(imported)) {
+                            games = imported.map(g => ({ ...g, createdAt: g.createdAt || Date.now() }));
+                        } else if (imported && typeof imported === 'object') {
+                            if (Array.isArray(imported.games)) games = imported.games;
+                            if (imported.serverConfig) {
+                                serverConfig = { ...DEFAULT_SERVER_CONFIG, ...imported.serverConfig };
+                                saveConfigToServer();
+                            } else if (imported.config) {
+                                serverConfig = { ...DEFAULT_SERVER_CONFIG, ...imported.config };
+                                saveConfigToServer();
+                            }
+                            if (imported.localConfig) {
+                                localConfig = { ...DEFAULT_LOCAL_CONFIG, ...imported.localConfig };
+                                localStorage.setItem('tool_local_config', JSON.stringify(localConfig));
+                            }
+                        } else {
+                            throw new Error("Invalid format");
+                        }
+                        applyConfig();
+                        renderGames();
+                        saveGamesToServer();
+                        closeSettings();
+                        showToast('データのインポートが完了しました', 'success');
+                    } catch (error) {
+                        showToast('ファイルの読み込みに失敗しました', 'error');
+                        console.error(error);
+                    }
+                    event.target.value = '';
+                };
+                reader.readAsText(file);
+                return;
+            }
+
+            const formData = new FormData();
+            formData.append('action', 'upload_restore');
+            formData.append('file', file);
+            
+            try {
+                showToast('ZIP復元中...', 'info');
+                const res = await fetch('./manage_backups.php', {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await res.json();
+                if (data.status === 'success') {
+                    showToast('インポートが完了しました。ページを再読み込みします。', 'success');
+                    setTimeout(() => location.reload(), 1500);
+                } else {
+                    showToast(data.message || 'インポートに失敗しました', 'error');
+                }
+            } catch(e) {
+                showToast('通信エラー', 'error');
+                console.error(e);
+            }
+            event.target.value = '';
+        }
+
+        async function loadServerBackups() {
+            const select = document.getElementById('server-backup-select');
+            if(!select) return;
+            select.innerHTML = '<option value="">読込中...</option>';
+            try {
+                const res = await fetch('./manage_backups.php?action=list');
+                const data = await res.json();
+                if (data.status === 'success') {
+                    if (data.backups.length === 0) {
+                        select.innerHTML = '<option value="">バックアップがありません</option>';
+                    } else {
+                        let html = '';
+                        data.backups.forEach(b => {
+                            const dateStr = new Date(b.time * 1000).toLocaleString();
+                            const sizeKb = Math.round(b.size / 1024);
+                            html += `<option value="${b.filename}">${dateStr} (${sizeKb}KB)</option>`;
+                        });
+                        select.innerHTML = html;
+                    }
+                } else {
+                    select.innerHTML = '<option value="">読み込み失敗</option>';
+                }
+            } catch(e) {
+                select.innerHTML = '<option value="">通信エラー</option>';
+            }
+        }
+
+        async function createServerBackup() {
+            try {
+                const res = await fetch('./manage_backups.php', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: 'create' })
+                });
+                const data = await res.json();
+                if (data.status === 'success') {
+                    showToast(data.message, 'success');
+                    loadServerBackups();
+                } else {
+                    showToast(data.message || '作成失敗', 'error');
+                }
+            } catch(e) {
+                showToast('通信エラー', 'error');
+            }
+        }
+
+        async function restoreServerBackup() {
+            const select = document.getElementById('server-backup-select');
+            const filenames = Array.from(select.selectedOptions).map(opt => opt.value).filter(v => v !== '');
+            if (filenames.length !== 1) {
+                showToast('復元するバックアップを「1つだけ」選択してください', 'warning');
+                return;
+            }
+            const filename = filenames[0];
+            try {
+                const res = await fetch('./manage_backups.php', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: 'restore', filename: filename })
+                });
+                const data = await res.json();
+                if (data.status === 'success') {
+                    showToast(data.message, 'success');
+                    setTimeout(() => location.reload(), 1500);
+                } else {
+                    showToast(data.message || '復元失敗', 'error');
+                }
+            } catch(e) {
+                showToast('通信エラー', 'error');
+            }
+        }
+
+        async function deleteServerBackup() {
+            const select = document.getElementById('server-backup-select');
+            const filenames = Array.from(select.selectedOptions).map(opt => opt.value).filter(v => v !== '');
+            if (filenames.length === 0) {
+                showToast('削除するバックアップを選択してください', 'warning');
+                return;
+            }
+            try {
+                let successCount = 0;
+                for (const filename of filenames) {
+                    const res = await fetch('./manage_backups.php', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ action: 'delete', filename: filename })
+                    });
+                    const data = await res.json();
+                    if (data.status === 'success') {
+                        successCount++;
+                    }
+                }
+                showToast(successCount + '件のバックアップを削除しました', 'success');
+                loadServerBackups();
+            } catch(e) {
+                showToast('通信エラー', 'error');
+            }
+        }
+
+
+
+        function updateClock() {
+            // 時計機能は削除されているが、互換性のために残す
+        }
+
+        // --- Initialization ---
+
+        async function init() {
+            els.grid = document.getElementById('game-grid');
+            const chatMsgInput = document.getElementById('chat-message');
+            if (chatMsgInput) {
+                chatMsgInput.addEventListener('keydown', e => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        sendChatMessage();
+                        chatMsgInput.style.height = 'auto';
+                    }
+                });
+                chatMsgInput.addEventListener('input', function() {
+                    this.style.height = 'auto';
+                    const maxH = window.innerHeight * 0.5;
+                    const newHeight = Math.min(this.scrollHeight, maxH);
+                    this.style.height = newHeight + 'px';
+                    this.style.overflowY = this.scrollHeight > maxH ? 'auto' : 'hidden';
+                });
+            }
+            
+            const shareMsgInput = document.getElementById('share-message');
+            if (shareMsgInput) {
+                shareMsgInput.addEventListener('keydown', e => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        submitShare();
+                    }
+                });
+                shareMsgInput.addEventListener('input', function() {
+                    this.style.height = 'auto';
+                    const maxH = window.innerHeight * 0.5;
+                    const newHeight = Math.min(this.scrollHeight, maxH);
+                    this.style.height = newHeight + 'px';
+                    this.style.overflowY = this.scrollHeight > maxH ? 'auto' : 'hidden';
+                });
+            }
+            
+            const stampSettingsSection = document.getElementById('stamp-settings-section');
+            
+            window.addEventListener('paste', e => {
+                if (els.settingsModal && els.settingsModal.style.display !== 'none') {
+                    if (e.clipboardData && e.clipboardData.items) {
+                        for (let i = 0; i < e.clipboardData.items.length; i++) {
+                            if (e.clipboardData.items[i].type.startsWith('image/')) {
+                                const file = e.clipboardData.items[i].getAsFile();
+                                if (file) {
+                                    e.preventDefault();
+                                    uploadCustomImageStamp(file);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+
+            if (stampSettingsSection) {
+                stampSettingsSection.addEventListener('dragover', e => {
+                    e.preventDefault();
+                    stampSettingsSection.style.outline = '2px dashed #007bff';
+                    stampSettingsSection.style.outlineOffset = '8px';
+                    stampSettingsSection.style.borderRadius = '8px';
+                    stampSettingsSection.style.background = 'rgba(0,123,255,0.05)';
+                    stampSettingsSection.style.paddingBottom = '16px';
+                    stampSettingsSection.style.marginBottom = '-16px';
+                });
+                stampSettingsSection.addEventListener('dragleave', e => {
+                    e.preventDefault();
+                    stampSettingsSection.style.outline = '';
+                    stampSettingsSection.style.outlineOffset = '';
+                    stampSettingsSection.style.borderRadius = '';
+                    stampSettingsSection.style.background = '';
+                    stampSettingsSection.style.paddingBottom = '';
+                    stampSettingsSection.style.marginBottom = '';
+                });
+                stampSettingsSection.addEventListener('drop', e => {
+                    e.preventDefault();
+                    stampSettingsSection.style.outline = '';
+                    stampSettingsSection.style.outlineOffset = '';
+                    stampSettingsSection.style.borderRadius = '';
+                    stampSettingsSection.style.background = '';
+                    stampSettingsSection.style.paddingBottom = '';
+                    stampSettingsSection.style.marginBottom = '';
+                    if (e.dataTransfer && e.dataTransfer.files) {
+                        for (let i = 0; i < e.dataTransfer.files.length; i++) {
+                            if (e.dataTransfer.files[i].type.startsWith('image/')) {
+                                uploadCustomImageStamp(e.dataTransfer.files[i]);
+                                break;
+                            }
+                        }
+                    }
+                });
+            }
+
+            setupShareDragAndDrop();
+            els.gameModal = document.getElementById('game-modal');
+            els.settingsModal = document.getElementById('settings-modal');
+            els.searchInput = document.getElementById('search-input');
+
+            try {
+                const res = await fetch('./config.json?t=' + Date.now());
+                if (res.ok) {
+                    const loadedConfig = await res.json();
+                    serverConfig = { ...DEFAULT_SERVER_CONFIG, ...loadedConfig };
+                }
+            } catch (e) {
+                console.warn('Config load failed, using defaults');
+                const localBackup = localStorage.getItem('config_backup_tool');
+                if (localBackup) serverConfig = { ...DEFAULT_SERVER_CONFIG, ...JSON.parse(localBackup) };
+            }
+            applyConfig();
+
+            // Load Games
+            try {
+                const res = await fetch('./games.json?t=' + Date.now());
+                if (res.ok) {
+                    games = await res.json();
+                }
+                await fetchStamps();
+            } catch (e) {
+                console.warn('Games load failed');
+                const localGames = localStorage.getItem('games_backup_tool');
+                if (localGames) {
+                    games = JSON.parse(localGames);
+                    showToast('サーバーから読み込めなかったため、ローカルバックアップを復元しました', 'warning');
+                }
+            }
+
+            renderGames();
+            restoreActiveNotifications();
+
+            // Auto Recovery Logic
+            const localGamesStr = localStorage.getItem('games_backup_tool');
+            if (localGamesStr) {
+                try {
+                    const localGames = JSON.parse(localGamesStr);
+                    let localPlayCount = 0;
+                    localGames.forEach(g => localPlayCount += (g.playCount || 0));
+                    let serverPlayCount = 0;
+                    games.forEach(g => serverPlayCount += (g.playCount || 0));
+                    if (localPlayCount > serverPlayCount) {
+                        console.log('Recovering games from local storage...', localPlayCount, '>', serverPlayCount);
+                        games = localGames;
+                        saveGamesToServer();
+                        showToast('ローカルからプレイ回数データを自動復元しました', 'success');
+                        renderGames();
+                    }
+                } catch(e) {}
+            }
+
+            els.searchInput.addEventListener('input', renderGames);
+
+            let mousedownTarget = null;
+            window.addEventListener('mousedown', e => {
+                mousedownTarget = e.target;
+            });
+
+            window.addEventListener('click', e => {
+                if (e.target === els.gameModal && mousedownTarget === els.gameModal) closeGameModal();
+                if (e.target === els.settingsModal && mousedownTarget === els.settingsModal) closeSettings();
+                
+                const isImageModalClick = e.target.closest('#image-modal') || (mousedownTarget && mousedownTarget.closest('#image-modal'));
+                const isPickerClick = e.target.closest('#reaction-picker') || (mousedownTarget && mousedownTarget.closest('#reaction-picker'));
+                
+                // Close chat if clicked outside (and not on a chat element or open button)
+                const chatSidebar = document.getElementById('chat-sidebar');
+                if (chatSidebar.classList.contains('active') && 
+                    !chatSidebar.contains(e.target) && 
+                    !e.target.closest('.chat-btn') && 
+                    !isImageModalClick && !isPickerClick) {
+                    if (mousedownTarget && !chatSidebar.contains(mousedownTarget) && !mousedownTarget.closest('.chat-btn')) {
+                        closeChat();
+                    }
+                }
+                
+                const shareSidebar = document.getElementById('share-sidebar');
+                if (shareSidebar.classList.contains('active') && 
+                    !shareSidebar.contains(e.target) && 
+                    !e.target.closest('.share-btn') && 
+                    !isImageModalClick && !isPickerClick) {
+                    if (mousedownTarget && !shareSidebar.contains(mousedownTarget) && !mousedownTarget.closest('.share-btn')) {
+                        closeShare();
+                    }
+                }
+            });
+
+            startAutoReload();
+        }
+
+        async function startAutoReload() {
+            try {
+                const res = await fetch('./check_timestamp.php?t=' + Date.now());
+                if (res.ok) {
+                    serverTimestamps = await res.json();
+                }
+            } catch(e) {}
+
+            setInterval(async () => {
+                if (isSaving) return;
+                try {
+                    const res = await fetch('./check_timestamp.php?t=' + Date.now());
+                    if (!res.ok) return;
+                    const ts = await res.json();
+                    
+                    if (serverTimestamps) {
+                        if (ts.games !== serverTimestamps.games || ts.config !== serverTimestamps.config) {
+                            console.log('Data changed remotely. Soft reloading...');
+                            let shouldRender = false;
+                            if (ts.games !== serverTimestamps.games) {
+                                const gRes = await fetch('./games.json?t=' + Date.now());
+                                if (gRes.ok) { games = await gRes.json(); shouldRender = true; }
+                            }
+                            if (ts.config !== serverTimestamps.config) {
+                                const cRes = await fetch('./config.json?t=' + Date.now());
+                                if (cRes.ok) { const loadedConfig = await cRes.json(); serverConfig = { ...DEFAULT_SERVER_CONFIG, ...loadedConfig }; applyConfig(); shouldRender = true; }
+                            }
+                            if (shouldRender) { renderGames(); renderFilters(); }
+                        }
+                    } else {
+                        serverTimestamps = ts;
+                    }
+                } catch(e) {}
+            }, 3000);
+
+            // 1分ごとに表示を更新して「何分前アクティブ」の時間を最新に保つ
+            setInterval(() => {
+                renderGames();
+            }, 60000);
+
+            // Chat polling (start after games are loaded)
+            fetchChat();
+            setInterval(fetchChat, 3000);
+            fetchShare();
+            setInterval(fetchShare, 3000);
+            document.addEventListener('visibilitychange', () => {
+                if (!document.hidden) {
+                    fetchChat();
+                }
+            });
+        }
+
+        function handleCategoryChange(select) {
+            const newInput = document.getElementById('game-category-new');
+            if (select.value === '__new__') {
+                newInput.style.display = 'block';
+                newInput.focus();
+            } else {
+                newInput.style.display = 'none';
+                newInput.value = '';
+            }
+        }
+
+        function toggleRanking() {
+            isRankingActive = !isRankingActive;
+            renderGames();
+        }
+
+        async function fetchShare() {
+            try {
+                const res = await fetch('./share.json?t=' + Date.now());
+                if (res.ok) {
+                    const newMessages = await res.json();
+                    if (JSON.stringify(newMessages) !== JSON.stringify(shareMessages)) {
+                        // Remove notifications for deleted messages
+                        document.querySelectorAll('.chat-notification').forEach(notif => {
+                            if (notif.dataset.isShare !== 'true') return; // Skip chat notifications
+                            const ts = parseInt(notif.dataset.timestamp);
+                            const nName = notif.dataset.name;
+                            const nMsg = notif.dataset.messageText;
+                            if (ts && !newMessages.some(m =>
+                                (m.timestamp === ts) ||
+                                (m.name === nName && m.message === nMsg)
+                            )) {
+                                notif.classList.add('hiding');
+                                setTimeout(() => notif.remove(), 300);
+
+                                // Remove from cache
+                                let activeNotifs = JSON.parse(localStorage.getItem('activeChatNotifs_tool') || '{}');
+                                const notifId = notif.id ? notif.id.replace('notif-', '') : '';
+                                if (notifId) {
+                                    delete activeNotifs[notifId];
+                                    localStorage.setItem('activeChatNotifs_tool', JSON.stringify(activeNotifs));
+                                }
+                            }
+                        });
+
+                        // Check for new messages from others
+                        if (initialShareLoaded) {
+                            const newItems = newMessages.filter(m => !shareMessages.some(old => old.id === m.id) && m.clientId !== myClientId);
+                            newItems.forEach(msg => {
+                                showChatNotification(msg, true);
+                            });
+                        } else {
+                            let dismissed = JSON.parse(localStorage.getItem('dismissedShareNotifs') || '[]');
+                            newMessages.forEach(msg => {
+                                if (msg.clientId !== myClientId && !dismissed.includes(msg.id)) {
+                                    showChatNotification(msg, true);
+                                }
+                            });
+                        }
+                        shareMessages = newMessages;
+                        initialShareLoaded = true;
+                        renderShare();
+                    } else {
+                        initialShareLoaded = true;
+                    }
+                }
+            } catch (e) {
+                console.error(e);
+            }
+        }
+
+        function renderShare() {
+            const container = document.getElementById('share-messages');
+            if (!container) return;
+            
+            if (shareMessages.length === 0) {
+                container.innerHTML = '<div style="text-align: center; color: #888; font-size: 13px; margin-top: 20px;">まだ投稿はありません</div>';
+                return;
+            }
+
+            let html = '';
+            shareMessages.forEach(msg => {
+                const timeStr = new Date(msg.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+                const name = msg.name || '名無しさん';
+                let gameHtml = '';
+                if (msg.gameId) {
+                    const game = games.find(g => g.id == msg.gameId);
+                    if (game) {
+                        gameHtml = `<div class="chat-message-game" onclick="App.openChatGame(${game.id})">🎮 ${escapeHtml(game.name)}</div>`;
+                    }
+                }
+                
+                html += `
+                    <div class="chat-message-item" id="share-msg-${msg.id}">
+                        ${msg.replyTo ? `<div class="replied-message">
+                            <strong>@${escapeHtml(msg.replyTo.name)}</strong>&nbsp; ${escapeHtml(msg.replyTo.message)}
+                        </div>` : ''}
+                        <div class="chat-message-header" style="display: flex; justify-content: space-between; font-size: 11px; color: #888; margin-bottom: 3px; align-items: center;">
+                            <div>
+                                <span class="chat-message-name">${escapeHtml(name)}</span>
+                                
+                                <span>${timeStr}</span>
+                            </div>
+                            <button onclick="App.deleteShareMessage(${msg.timestamp})" title="削除" style="background: none; border: none; color: #ff5252; cursor: pointer; font-size: 14px; padding: 0 4px; opacity: 0.6;">×</button>
+                        </div>
+                        ${gameHtml}
+                        ${(() => { let msgText = msg.message || ''; if (msgText === '') return ''; if (msgText.toLowerCase().startsWith('/a')) { return `<div class="chat-message-text aa-font">${escapeHtml(msgText.replace(/^\/a(?:\r?\n| )?/i, ''))}</div>`; } return `<div class="chat-message-text">${escapeHtml(msgText)}</div>`; })()}
+                        ${msg.imageUrl ? `<div style="margin-top: 8px;"><img src="${escapeHtml(msg.imageUrl)}" onclick="App.openImageModal('${escapeHtml(msg.imageUrl)}')" style="max-width: 50%; border-radius: 8px; border: 1px solid rgba(128,128,128,0.2); cursor: zoom-in;" alt="Image"></div>` : ''}
+                        
+                        <div style="display: flex; gap: 4px; margin-top: 6px; flex-wrap: wrap;">
+                            ${Object.keys(msg.reactions || {}).map(emoji => {
+                                const count = msg.reactions[emoji].length;
+                                const reacted = msg.reactions[emoji].includes(myClientId);
+                                if (count === 0) return '';
+                                return `<button class="reaction-btn ${reacted ? 'reacted' : ''}" onclick="App.reactMessage('${emoji}', ${msg.timestamp}, true)">${App.renderStampContent(emoji)} <span>${count}</span></button>`;
+                            }).join('')}
+                            <button class="add-reaction-btn reaction-btn" style="width: 24px; justify-content: center;" onclick="App.toggleReactionPicker(${msg.timestamp}, true, this, event)">+</button>
+                            <button class="reaction-btn" style="width: 24px; justify-content: center;" onclick="App.startReply(true, ${msg.timestamp})" title="返信">↩</button>
+                        </div>
+                    </div>
+                `;
+            });
+            container.innerHTML = html;
+            container.scrollTop = container.scrollHeight;
+        }
+
+        async function deleteShareMessage(timestamp) {
+            // Remove notification immediately
+            const msg = shareMessages.find(m => m.timestamp === timestamp);
+            if (msg) {
+                document.querySelectorAll('.chat-notification').forEach(notif => {
+                    if (notif.dataset.isShare !== 'true') return;
+                    const ts = parseInt(notif.dataset.timestamp);
+                    const nName = notif.dataset.name;
+                    const nMsg = notif.dataset.messageText;
+                    if (ts === timestamp || (msg.name === nName && msg.message === nMsg)) {
+                        notif.classList.add('hiding');
+                        setTimeout(() => notif.remove(), 300);
+                        let activeNotifs = JSON.parse(localStorage.getItem('activeChatNotifs_tool') || '{}');
+                        const notifId = notif.id ? notif.id.replace('notif-', '') : '';
+                        if (notifId) {
+                            delete activeNotifs[notifId];
+                            localStorage.setItem('activeChatNotifs_tool', JSON.stringify(activeNotifs));
+                        }
+                    }
+                });
+            }
+
+            try {
+                const res = await fetch('./post_share.php', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: 'delete', timestamp: timestamp, clientId: myClientId })
+                });
+                if (res.ok) {
+                    fetchShare();
+                } else {
+                    showToast('削除失敗', 'error');
+                }
+            } catch(e) {
+                showToast('通信エラー', 'error');
+            }
+        }
+
+        let currentReactionMsgTs = 0;
+        let currentReactionIsShare = false;
+        
+        let currentReplyToChat = null;
+        let currentReplyToShare = null;
+
+        function startReply(isShare, timestamp) {
+            const msgs = isShare ? shareMessages : chatMessages;
+            const msg = msgs.find(m => m.timestamp === timestamp);
+            if (!msg) return;
+            const name = msg.name;
+            const messageText = msg.message || '';
+            const messageSnippet = messageText.length > 30 ? messageText.substring(0, 30) + '...' : messageText;
+            
+            const replyObj = { timestamp, name, message: messageSnippet.replace(/\n/g, " ") };
+            if (isShare) {
+                currentReplyToShare = replyObj;
+                document.getElementById('share-reply-preview').style.display = 'flex';
+                document.getElementById('share-reply-name').textContent = name;
+                document.getElementById('share-reply-text').textContent = replyObj.message;
+                document.getElementById('share-message').focus();
+            } else {
+                currentReplyToChat = replyObj;
+                document.getElementById('chat-reply-preview').style.display = 'flex';
+                document.getElementById('chat-reply-name').textContent = name;
+                document.getElementById('chat-reply-text').textContent = replyObj.message;
+                document.getElementById('chat-message').focus();
+            }
+        }
+
+        function cancelReply(isShare) {
+            if (isShare) {
+                currentReplyToShare = null;
+                document.getElementById('share-reply-preview').style.display = 'none';
+            } else {
+                currentReplyToChat = null;
+                document.getElementById('chat-reply-preview').style.display = 'none';
+            }
+        }
+
+        function toggleReactionPicker(timestamp, isShare, btnElem, event) {
+            event.stopPropagation();
+            const picker = document.getElementById('reaction-picker');
+            if (picker.style.display === 'flex' && currentReactionMsgTs === timestamp && currentReactionIsShare === isShare) {
+                picker.style.display = 'none';
+                return;
+            }
+            currentReactionMsgTs = timestamp;
+            currentReactionIsShare = isShare;
+            picker.style.display = 'flex';
+            const rect = btnElem.getBoundingClientRect();
+            picker.style.top = (rect.bottom + 5) + 'px';
+            picker.style.left = Math.min(rect.left, window.innerWidth - 180) + 'px';
+        }
+
+        async function reactMessage(emoji, explicitTs = null, explicitIsShare = null) {
+            const timestamp = explicitTs !== null ? explicitTs : currentReactionMsgTs;
+            const isShare = explicitIsShare !== null ? explicitIsShare : currentReactionIsShare;
+            
+            document.getElementById('reaction-picker').style.display = 'none';
+            if (!timestamp) return;
+
+            try {
+                const endpoint = isShare ? './post_share.php' : './post_chat.php';
+                const res = await fetch(endpoint, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: 'react', timestamp: timestamp, emoji: emoji, clientId: myClientId })
+                });
+                if (res.ok) {
+                    if (isShare) fetchShare(); else fetchChat();
+                } else {
+                    showToast('リアクションに失敗しました', 'error');
+                }
+            } catch(e) {
+                console.error(e);
+            }
+        }
+
+        // Close picker when clicking outside
+        window.addEventListener('click', e => {
+            const picker = document.getElementById('reaction-picker');
+            if (picker && picker.style.display !== 'none' && !e.target.closest('#reaction-picker') && !e.target.closest('.add-reaction-btn')) {
+                picker.style.display = 'none';
+            }
+        });
+
+        async function deleteChatMessage(timestamp) {
+            // Remove notification immediately
+            const msg = chatMessages.find(m => m.timestamp === timestamp);
+            if (msg) {
+                document.querySelectorAll('.chat-notification').forEach(notif => {
+                    if (notif.dataset.isShare === 'true') return;
+                    const ts = parseInt(notif.dataset.timestamp);
+                    const nName = notif.dataset.name;
+                    const nMsg = notif.dataset.messageText;
+                    if (ts === timestamp || (msg.name === nName && msg.message === nMsg)) {
+                        notif.classList.add('hiding');
+                        setTimeout(() => notif.remove(), 300);
+                        let activeNotifs = JSON.parse(localStorage.getItem('activeChatNotifs_tool') || '{}');
+                        const notifId = notif.id ? notif.id.replace('notif-', '') : '';
+                        if (notifId) {
+                            delete activeNotifs[notifId];
+                            localStorage.setItem('activeChatNotifs_tool', JSON.stringify(activeNotifs));
+                        }
+                    }
+                });
+            }
+
+            try {
+                const res = await fetch('./post_chat.php', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: 'delete', timestamp: timestamp, clientId: myClientId })
+                });
+                if (res.ok) {
+                    fetchChat();
+                } else {
+                    showToast('削除失敗', 'error');
+                }
+            } catch(e) {
+                showToast('通信エラー', 'error');
+            }
+        }
+
+        function openShare() {
+            document.getElementById('share-name').value = document.getElementById('chat-name').value || localStorage.getItem('chat_name') || '';
+            
+            const shareSelect = document.getElementById('share-game-select');
+            let options = '<option value="">ゲーム指定なし</option>';
+            games.forEach(g => {
+                options += `<option value="${g.id}">${escapeHtml(g.name)}</option>`;
+            });
+            shareSelect.innerHTML = options;
+            
+            document.getElementById('share-message').value = '';
+            clearShareImage();
+            document.getElementById('share-sidebar').classList.add('active');
+            document.body.classList.add('chat-open');
+        }
+
+        function closeShare() {
+            document.getElementById('share-sidebar').classList.remove('active');
+            document.body.classList.remove('chat-open');
+        }
+
+        function openImageModal(url) {
+            const modal = document.getElementById('image-modal');
+            const img = document.getElementById('image-modal-img');
+            img.src = url;
+            modal.style.display = 'flex';
+            setTimeout(() => modal.style.opacity = '1', 10);
+        }
+
+        function closeImageModal() {
+            const modal = document.getElementById('image-modal');
+            modal.style.opacity = '0';
+            setTimeout(() => {
+                modal.style.display = 'none';
+                document.getElementById('image-modal-img').src = '';
+            }, 300);
+        }
+        
+        function handleShareImageSelect() {
+            const input = document.getElementById('share-image');
+            if(input.files && input.files[0]){
+                const r = new FileReader();
+                r.onload = e => {
+                    document.getElementById('share-image-preview-img').src = e.target.result;
+                    document.getElementById('share-image-preview-container').style.display = 'block';
+                };
+                r.readAsDataURL(input.files[0]);
+            }
+        }
+        
+        function clearShareImage() {
+            document.getElementById('share-image').value = '';
+            document.getElementById('share-image-preview-container').style.display = 'none';
+        }
+        
+        function setupShareDragAndDrop() {
+            const dropZone = document.getElementById('share-sidebar');
+            const fileInput = document.getElementById('share-image');
+            if(!dropZone || !fileInput) return;
+            dropZone.addEventListener('dragover', e => {
+                e.preventDefault();
+                dropZone.classList.add('drag-over');
+            });
+            dropZone.addEventListener('dragleave', e => {
+                e.preventDefault();
+                dropZone.classList.remove('drag-over');
+            });
+            dropZone.addEventListener('drop', e => {
+                e.preventDefault();
+                dropZone.classList.remove('drag-over');
+                if(e.dataTransfer.files && e.dataTransfer.files[0]) {
+                    if(e.dataTransfer.files[0].type.startsWith('image/')) {
+                        fileInput.files = e.dataTransfer.files;
+                        handleShareImageSelect();
+                    }
+                }
+            });
+            
+            // Clipboard Paste Support
+            window.addEventListener('paste', e => {
+                if (!dropZone.classList.contains('active')) return;
+                
+                if (e.clipboardData && e.clipboardData.items) {
+                    for (let i = 0; i < e.clipboardData.items.length; i++) {
+                        if (e.clipboardData.items[i].type.startsWith('image/')) {
+                            const file = e.clipboardData.items[i].getAsFile();
+                            if (file) {
+                                const dataTransfer = new DataTransfer();
+                                dataTransfer.items.add(file);
+                                fileInput.files = dataTransfer.files;
+                                handleShareImageSelect();
+                                e.preventDefault();
+                                break;
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        async function submitShare() {
+            const nameInput = document.getElementById('share-name');
+            const messageInput = document.getElementById('share-message');
+            const imageInput = document.getElementById('share-image');
+            const gameSelect = document.getElementById('share-game-select');
+            const btn = document.getElementById('share-submit-btn');
+            
+            const name = nameInput.value.trim() || '名無しさん';
+            const message = messageInput.value.trim();
+            const file = imageInput.files[0];
+            const gameId = gameSelect.value ? parseInt(gameSelect.value, 10) : null;
+            
+            if (!message && !file) {
+                showToast('メッセージまたは画像を入力してください', 'error');
+                return;
+            }
+            if (message.length > 300) {
+                showToast('最大300文字です', 'error');
+                return;
+            }
+            
+            btn.disabled = true;
+            btn.innerText = '送信中...';
+            
+            // Optimistic update
+            const tempMsg = {
+                id: 'temp_share_' + Date.now(),
+                name: name,
+                message: message,
+                gameId: gameId,
+                timestamp: Date.now(),
+                clientId: myClientId,
+                imageUrl: file ? URL.createObjectURL(file) : null,
+                replyTo: currentReplyToShare
+            };
+            shareMessages.push(tempMsg);
+            renderShare();
+            
+            const formData = new FormData();
+            formData.append('name', name);
+            formData.append('message', message);
+            formData.append('clientId', myClientId);
+            formData.append('isShare', 'true');
+            if (currentReplyToShare) formData.append('replyTo', JSON.stringify(currentReplyToShare));
+            if (gameId) formData.append('gameId', gameId);
+            if (file) {
+                formData.append('image', file);
+            }
+            cancelReply(true);
+            
+            try {
+                const response = await fetch('post_share.php', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const data = await response.json();
+                
+                if (data.status === 'success') {
+                    showChatNotification(tempMsg, true);
+                    localStorage.setItem('chat_name', name);
+                    document.getElementById('share-name').value = name;
+                    const msgInput = document.getElementById('share-message');
+                    if (msgInput) {
+                        msgInput.value = '';
+                        msgInput.style.height = 'auto';
+                    }
+                    clearShareImage();
+                    
+                    fetchShare();
+                } else {
+                    showToast('エラー: ' + data.message, 'error');
+                }
+            } catch (e) {
+                showToast('通信エラー', 'error');
+            } finally {
+                btn.disabled = false;
+                btn.innerText = '投稿する';
+            }
+        }
+
+        return {
+            init,
+            openGameModal, closeGameModal, saveGame, deleteGame, deleteCategory,
+            openSettings, closeSettings, saveSettings, exportData, importData, handleGridSizeChange,
+            setCategory, setPlayerFilter, handleCategoryChange, togglePin, toggleRanking,
+            handleCategoryDragStart, handleCategoryDragOver, handleCategoryDrop, handleCategoryDragEnd,
+            openChat, closeChat, sendChatMessage, openChatGame, deleteChatMessage,
+            loadServerBackups, createServerBackup, restoreServerBackup, deleteServerBackup,
+            openShare, closeShare, submitShare, handleShareImageSelect, clearShareImage, deleteShareMessage,
+            openImageModal, closeImageModal,
+            toggleReactionPicker, reactMessage,
+            startReply, cancelReply,
+            addCustomStamp, deleteCustomStamp, addCustomImageStamp, renderStampContent
+        };
+    })();
+
+    document.addEventListener('DOMContentLoaded', App.init);
+    </script>
+
+    <!-- Image Lightbox Modal -->
+    <div class="modal" id="image-modal" role="dialog" aria-modal="true" aria-label="画像拡大" onclick="App.closeImageModal()">
+        <img id="image-modal-img" src="" style="max-width: 90%; max-height: 90%; object-fit: contain; border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.5); cursor: zoom-out;">
+    </div>
+
+    <!-- Reaction Picker -->
+    <div id="reaction-picker" style="display: none; position: fixed; background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 20px; padding: 4px; box-shadow: 0 4px 12px rgba(0,0,0,0.4); z-index: 1000; gap: 4px; flex-wrap: wrap; max-width: 200px;"></div>
+</body>
+</html>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
