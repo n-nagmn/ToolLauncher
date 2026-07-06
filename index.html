@@ -2312,10 +2312,16 @@
                     ${playerBadge}
                     <button class="pin-btn" title="${game.isPinned ? '固定を解除' : '位置を固定'}" onclick="App.togglePin(${game.id}, event)">${game.isPinned ? '✖️' : '📌'}</button>
                     <button class="edit-btn" title="編集" onclick="App.openGameModal(${game.id}, event)" aria-label="${escapeHtml(game.name)}を編集">✎</button>
-                    <img src="${escapeHtml(imgUrl)}" alt="" loading="lazy" onerror="this.src='${generatePlaceholderImage(game.name)}'" onload="this.classList.add('loaded')">
+                    <img alt="" loading="lazy">
                     <div class="title-bar" title="${escapeHtml(game.name)}">${escapeHtml(game.name)}</div>
                     ${catHtml}
                 `;
+                const img = card.querySelector('img');
+                if (img) {
+                    img.src = imgUrl;
+                    img.onload = () => img.classList.add('loaded');
+                    img.onerror = () => { img.src = generatePlaceholderImage(game.name); };
+                }
                 fragment.appendChild(card);
             });
 
