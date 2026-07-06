@@ -1583,11 +1583,10 @@
             return userId;
         }
 
+        const htmlEscapes = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
         function escapeHtml(str) {
             if (typeof str !== 'string') return '';
-            const div = document.createElement('div');
-            div.textContent = str;
-            return div.innerHTML;
+            return str.replace(/[&<>"']/g, match => htmlEscapes[match]);
         }
 
         function showToast(message, type = 'info', duration = 3000) {
@@ -1762,7 +1761,9 @@
             return hash;
         }
 
+        const _placeholderCache = {};
         function generatePlaceholderImage(title) {
+            if (_placeholderCache[title]) return _placeholderCache[title];
             const canvas = document.createElement('canvas');
             canvas.width = 400; 
             canvas.height = 225;
@@ -1789,7 +1790,9 @@
 
             const initials = title.substring(0, Math.min(title.length, 2)).toUpperCase();
             ctx.fillText(initials, canvas.width / 2, canvas.height / 2);
-            return canvas.toDataURL('image/png');
+            const dataUrl = canvas.toDataURL('image/png');
+            _placeholderCache[title] = dataUrl;
+            return dataUrl;
         }
 
         // --- Server Communication ---
@@ -2203,6 +2206,7 @@
             }
 
             const fragment = document.createDocumentFragment();
+            const readHistory = JSON.parse(localStorage.getItem('toolReadHistory')) || {};
 
             filteredGames.forEach((game, index) => {
                 const card = document.createElement('div');
@@ -2232,7 +2236,6 @@
                 });
 
                 // --- UPDATE / NEW / PINNED Badge Logic ---
-                const readHistory = JSON.parse(localStorage.getItem('toolReadHistory')) || {};
                 const lastReadTime = readHistory[game.id] || 0;
 
                 const createdAtMs = game.createdAt ? (game.createdAt > 9999999999 ? game.createdAt : game.createdAt * 1000) : 0;
@@ -3204,7 +3207,11 @@
                 } catch(e) {}
             }
 
-            els.searchInput.addEventListener('input', renderGames);
+            let searchTimeout;
+            els.searchInput.addEventListener('input', () => {
+                clearTimeout(searchTimeout);
+                searchTimeout = setTimeout(renderGames, 150);
+            });
 
             let mousedownTarget = null;
             window.addEventListener('mousedown', e => {
