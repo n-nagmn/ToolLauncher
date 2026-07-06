@@ -146,7 +146,7 @@ if ($is_aa) {
     exit;
 }
 
-if ($line_count >= 5 && !$is_aa) {
+if ($line_count >= 9 && !$is_aa) {
     $response["message"] = "複数行のAA（アスキーアート）を送信する場合は、メッセージの先頭に /a を付けてください。";
     echo json_encode($response, JSON_UNESCAPED_UNICODE);
     exit;

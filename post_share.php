@@ -162,9 +162,9 @@ if ($is_aa) {
     exit;
 }
 
-if ($line_count >= 5 && !$is_aa) {
+if ($line_count >= 9 && !$is_aa) {
     if (isset($decoded['isShare']) && $decoded['isShare'] === 'true') {
-        $response["message"] = "改行が多すぎます（最大4行）。アスキーアートは許可されていません。";
+        $response["message"] = "改行が多すぎます（最大8行）。アスキーアートは許可されていません。";
         echo json_encode($response, JSON_UNESCAPED_UNICODE);
         exit;
     } else {
