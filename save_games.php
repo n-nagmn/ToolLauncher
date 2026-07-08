@@ -195,7 +195,8 @@ if ($fp_lock && flock($fp_lock, LOCK_EX)) {
             'lastHash' => $is_outdated ? $server_game['lastHash'] : (isset($game['lastHash']) ? htmlspecialchars(trim($game['lastHash']), ENT_QUOTES, 'UTF-8') : ''),
             'isPinned' => $is_outdated ? $server_game['isPinned'] : (isset($game['isPinned']) ? filter_var($game['isPinned'], FILTER_VALIDATE_BOOLEAN) : false),
             'playCount' => $merged_play_count,
-            'activeUsers' => $merged_active
+            'activeUsers' => $merged_active,
+            'creator' => $is_outdated ? ($server_game['creator'] ?? '') : (isset($game['creator']) ? htmlspecialchars(mb_substr(trim($game['creator']), 0, 10), ENT_QUOTES, 'UTF-8') : '')
         ];
     }
 
