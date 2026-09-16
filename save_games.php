@@ -81,13 +81,13 @@ if ($decoded === null && strtolower(trim($json_data)) !== 'null') {
 }
 
 if (!is_array($decoded)) {
-    $response["message"] = "ゲームデータは配列である必要があります";
+    $response["message"] = "ツールデータは配列である必要があります";
     echo json_encode($response, JSON_UNESCAPED_UNICODE);
     exit;
 }
 
 if (count($decoded) > $max_games) {
-    $response["message"] = "ゲーム数が上限（{$max_games}件）を超えています";
+    $response["message"] = "ツール数が上限（{$max_games}件）を超えています";
     echo json_encode($response, JSON_UNESCAPED_UNICODE);
     exit;
 }

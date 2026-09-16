@@ -57,8 +57,7 @@
             border-top: 1px solid rgba(0,0,0,0.03);
         }
 
-        body.light-mode .category-chip, 
-        body.light-mode .player-chip {
+        body.light-mode .category-chip {
             background: rgba(0,0,0,0.05);
             border-color: rgba(0,0,0,0.1);
             color: #333;
@@ -97,7 +96,6 @@
             background: linear-gradient(to bottom, rgba(255,255,255,0.9) 0%, transparent 100%);
         }
 
-        body.light-mode .player-badge,
         body.light-mode .creator-badge {
             background: rgba(255, 255, 255, 0.9);
             color: #333;
@@ -141,22 +139,18 @@
             border-left-width: 5px;
         }
 
-        body.light-mode .category-chip.active,
-        body.light-mode .player-chip.active {
+        body.light-mode .category-chip.active {
             background: var(--focus-color);
             color: #000;
             border-color: rgba(0,0,0,0.1);
             box-shadow: 0 2px 8px rgba(var(--focus-color-rgb), 0.4);
         }
 
-        body.light-mode .category-filter::-webkit-scrollbar-thumb,
-        body.light-mode .player-filter::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.2); }
-        body.light-mode .category-filter::-webkit-scrollbar-thumb:hover,
-        body.light-mode .player-filter::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,0.4); }
+        body.light-mode .category-filter::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.2); }
+        body.light-mode .category-filter::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,0.4); }
 
         /* Active chips for both modes (vibrancy boost) */
-        .category-chip.active,
-        .player-chip.active {
+        .category-chip.active {
             box-shadow: 0 0 15px rgba(var(--focus-color-rgb), 0.3);
             transform: translateY(-1px);
         }
@@ -319,58 +313,10 @@
             padding: 8px 0;
             padding-bottom: 12px;
         }
-        .category-filter::-webkit-scrollbar,
-        .player-filter::-webkit-scrollbar { height: 8px; }
-        .category-filter::-webkit-scrollbar-track,
-        .player-filter::-webkit-scrollbar-track { background: transparent; }
-        .category-filter::-webkit-scrollbar-thumb,
-        .player-filter::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 4px; }
-        .category-filter::-webkit-scrollbar-thumb:hover,
-        .player-filter::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.25); }
-
-        .player-filter {
-            display: flex;
-            gap: 8px;
-            overflow-x: auto;
-            scrollbar-width: thin;
-            scrollbar-color: rgba(255,255,255,0.15) transparent;
-            max-width: 100%;
-            border-left: 1px solid rgba(255,255,255,0.1);
-            padding-left: 16px;
-            padding-top: 8px;
-            padding-bottom: 12px;
-            margin-left: 8px;
-            flex-wrap: nowrap;
-            min-width: 0;
-        }
-
-        .player-chip {
-            padding: 6px 14px;
-            border-radius: 20px;
-            background: rgba(255,255,255,0.08);
-            border: 1px solid rgba(255,255,255,0.1);
-            font-size: 12px;
-            cursor: pointer;
-            transition: all var(--transition-fast);
-            white-space: nowrap;
-            display: flex;
-            align-items: center;
-            gap: 4px;
-        }
-        .player-chip:hover { background: rgba(255,255,255,0.15); }
-        .player-chip.active {
-            background: var(--focus-color);
-            color: #000;
-            border-color: var(--focus-color);
-            font-weight: 700;
-        }
-        .player-chip::before {
-            content: "👤";
-            font-size: 10px;
-        }
-        .player-chip.multi::before {
-            content: "👥";
-        }
+        .category-filter::-webkit-scrollbar { height: 8px; }
+        .category-filter::-webkit-scrollbar-track { background: transparent; }
+        .category-filter::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 4px; }
+        .category-filter::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.25); }
 
         .category-chip {
             padding: 6px 14px;
@@ -534,34 +480,6 @@
             z-index: 15;
             white-space: nowrap;
             border: 1px solid rgba(255, 255, 255, 0.15);
-        }
-
-        .player-badge {
-            position: absolute;
-            bottom: 8px;
-            right: 8px;
-            background: rgba(0, 0, 0, 0.75);
-            color: #fff;
-            padding: 4px 10px;
-            border-radius: 12px;
-            font-size: 12px;
-            font-weight: 700;
-            display: flex;
-            align-items: center;
-            gap: 4px;
-            /* backdrop-filter removed */
-            border: 1px solid rgba(255, 255, 255, 0.15);
-            z-index: 15;
-            letter-spacing: 0.3px;
-            white-space: nowrap;
-        }
-        .player-badge::before {
-            content: "👤";
-            font-size: 11px;
-            opacity: 0.9;
-        }
-        .player-badge.multi::before {
-            content: "👥";
         }
 
         .card-badge {
@@ -1144,7 +1062,6 @@
         <div class="header-left">
             <div id="ranking-toggle-container"></div>
             <div class="category-filter" id="category-filter"></div>
-            <div class="player-filter" id="player-filter"></div>
         </div>
         <div class="header-right">
             <div class="search-container">
@@ -1164,81 +1081,35 @@
 
     <div class="modal" id="game-modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
         <div class="modal-content">
-            <h2 id="modal-title">ゲームを追加</h2>
+            <h2 id="modal-title">ツールを追加</h2>
             <input type="hidden" id="game-id">
 
             <div class="form-group">
                 <label for="game-name">タイトル *</label>
-                <input type="text" id="game-name" placeholder="例: Super Web Mario" required autocomplete="off">
-            </div>
-            <div style="display: flex; gap: 15px;">
-                <div class="form-group" style="flex: 1;">
-                    <label for="game-category">カテゴリー</label>
-                    <select id="game-category" onchange="App.handleCategoryChange(this)">
-                        <option value="">未分類</option>
-                        <option value="action">アクション</option>
-                        <option value="puzzle">パズル</option>
-                        <option value="rpg">RPG</option>
-                        <option value="shooter">シューティング</option>
-                        <option value="sports">スポーツ</option>
-                        <option value="strategy">ストラテジー</option>
-                        <option value="casual">カジュアル</option>
-                        <option value="retro">レトロ</option>
-                        <option value="__new__">＋ 新規カテゴリー...</option>
-                    </select>
-                    <input type="text" id="game-category-new" placeholder="新規カテゴリー名" style="display:none; margin-top:8px; width:100%; padding:10px 14px; border:1px solid rgba(255,255,255,0.1); border-radius:6px; background:rgba(0,0,0,0.3); color:white; outline:none; font-size:14px;">
-                </div>
-                <div class="form-group" style="flex: 1;">
-                    <label>プレイ人数</label>
-                    <div style="display: flex; align-items: center; gap: 8px;">
-                        <select id="game-players-min" style="flex: 1;">
-                            <option value="">?</option>
-                            <option value="1">1</option>
-                            <option value="2">2</option>
-                            <option value="3">3</option>
-                            <option value="4">4</option>
-                            <option value="5">5</option>
-                            <option value="6">6</option>
-                            <option value="8">8</option>
-                            <option value="10">10</option>
-                            <option value="12">12</option>
-                            <option value="16">16</option>
-                            <option value="20">20</option>
-                            <option value="32">32</option>
-                            <option value="50">50</option>
-                            <option value="64">64</option>
-                            <option value="100">100</option>
-                        </select>
-                        <span style="color: #888; font-size: 13px;">〜</span>
-                        <select id="game-players-max" style="flex: 1;">
-                            <option value="">?</option>
-                            <option value="1">1</option>
-                            <option value="2">2</option>
-                            <option value="3">3</option>
-                            <option value="4">4</option>
-                            <option value="5">5</option>
-                            <option value="6">6</option>
-                            <option value="8">8</option>
-                            <option value="10">10</option>
-                            <option value="12">12</option>
-                            <option value="16">16</option>
-                            <option value="20">20</option>
-                            <option value="32">32</option>
-                            <option value="50">50</option>
-                            <option value="64">64</option>
-                            <option value="100">100</option>
-                            <option value="999">∞</option>
-                        </select>
-                        <span style="color: #888; font-size: 13px;">人</span>
-                    </div>
-                </div>
+                <input type="text" id="game-name" placeholder="例: 社内Wiki" required autocomplete="off">
             </div>
             <div class="form-group">
-                <label for="game-creator">制作者 (オプション)</label>
-                <input type="text" id="game-creator" placeholder="制作者名..." maxlength="10">
+                <label for="game-category">カテゴリー</label>
+                <select id="game-category" onchange="App.handleCategoryChange(this)">
+                    <option value="">未分類</option>
+                    <option value="dev">開発</option>
+                    <option value="network">ネットワーク</option>
+                    <option value="monitor">監視</option>
+                    <option value="admin">管理</option>
+                    <option value="docs">ドキュメント</option>
+                    <option value="data">データ</option>
+                    <option value="security">セキュリティ</option>
+                    <option value="utility">ユーティリティ</option>
+                    <option value="__new__">＋ 新規カテゴリー...</option>
+                </select>
+                <input type="text" id="game-category-new" placeholder="新規カテゴリー名" style="display:none; margin-top:8px; width:100%; padding:10px 14px; border:1px solid rgba(255,255,255,0.1); border-radius:6px; background:rgba(0,0,0,0.3); color:white; outline:none; font-size:14px;">
             </div>
             <div class="form-group">
-                <label for="game-url">ゲームURL *</label>
+                <label for="game-creator">作成者 (オプション)</label>
+                <input type="text" id="game-creator" placeholder="作成者名..." maxlength="10">
+            </div>
+            <div class="form-group">
+                <label for="game-url">ツールURL *</label>
                 <input type="url" id="game-url" placeholder="https://..." required>
             </div>
             <div class="form-group">
@@ -1313,7 +1184,7 @@
                 </label>
                 <label class="form-group-checkbox">
                     <input type="checkbox" id="setting-new-tab">
-                    <span>ゲームを新しいタブで開く</span>
+                    <span>ツールを新しいタブで開く</span>
                 </label>
                 <label class="form-group-checkbox">
                     <input type="checkbox" id="setting-animations">
@@ -1336,7 +1207,7 @@
 
                 <div class="sub-section">
                     <h4>カテゴリー管理</h4>
-                    <p>不要になったカテゴリーを削除します（対象のゲームは「未分類」になります）。</p>
+                    <p>不要になったカテゴリーを削除します（対象のツールは「未分類」になります）。</p>
                     <div id="settings-category-list"></div>
                 </div>
 
@@ -1357,7 +1228,7 @@
 
                 <div class="sub-section">
                     <h4>データ管理</h4>
-                    <p>ゲームデータの書き出し・読み込みを行います。</p>
+                    <p>ツールデータの書き出し・読み込みを行います。</p>
                     <div class="settings-btn-group">
                         <button class="btn-outline" onclick="App.exportData()">↑ エクスポート</button>
                         <button class="btn-outline" onclick="document.getElementById('import-file').click()">↓ インポート</button>
@@ -1405,7 +1276,7 @@
             </div>
             <input type="text" id="share-name" placeholder="名前 (省略可)">
             <select id="share-game-select">
-                <option value="">ゲーム指定なし</option>
+                <option value="">ツール指定なし</option>
             </select>
             <div class="share-input-box" style="position: relative; width: 100%; border-radius: 6px; display: flex; flex-direction: column; min-height: 80px; box-sizing: border-box; margin-bottom: 8px;" id="share-input-wrapper">
                 <textarea id="share-message" placeholder="メッセージを入力... (画像はドラッグ＆ドロップで添付)" rows="2" style="width: 100%; border: none; background: transparent; color: var(--text-color); padding: 10px; font-size: 13px; font-family: inherit; outline: none; resize: none; box-sizing: border-box; flex-grow: 1; margin: 0;"></textarea>
@@ -1422,7 +1293,7 @@
     <!-- Chat Sidebar -->
     <div id="chat-sidebar" class="chat-sidebar">
         <div class="chat-header">
-            <h3><svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block; vertical-align:-0.15em; margin-right: 2px;"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"></path><circle cx="8" cy="11" r="1.5" fill="currentColor" stroke="none"></circle><circle cx="12" cy="11" r="1.5" fill="currentColor" stroke="none"></circle><circle cx="16" cy="11" r="1.5" fill="currentColor" stroke="none"></circle></svg> 募集・チャット</h3>
+            <h3><svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block; vertical-align:-0.15em; margin-right: 2px;"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"></path><circle cx="8" cy="11" r="1.5" fill="currentColor" stroke="none"></circle><circle cx="12" cy="11" r="1.5" fill="currentColor" stroke="none"></circle><circle cx="16" cy="11" r="1.5" fill="currentColor" stroke="none"></circle></svg> 連絡・チャット</h3>
             <button class="chat-close-btn" onclick="App.closeChat()" title="閉じる">×</button>
         </div>
         <div class="chat-messages" id="chat-messages">
@@ -1435,7 +1306,7 @@
             </div>
             <input type="text" id="chat-name" placeholder="名前 (省略可)">
             <select id="chat-game-select">
-                <option value="">ゲーム指定なし</option>
+                <option value="">ツール指定なし</option>
             </select>
             <textarea id="chat-message" placeholder="メッセージを入力... (Enterで送信)" rows="2"></textarea>
             <button class="btn-save" style="width: 100%; justify-content: center;" onclick="App.sendChatMessage()">送信</button>
@@ -1470,9 +1341,9 @@
         };
 
         const CATEGORY_LABELS = {
-            action: 'アクション', puzzle: 'パズル', rpg: 'RPG',
-            shooter: 'シューティング', sports: 'スポーツ',
-            strategy: 'ストラテジー', casual: 'カジュアル', retro: 'レトロ'
+            dev: '開発', network: 'ネットワーク', monitor: '監視',
+            admin: '管理', docs: 'ドキュメント',
+            data: 'データ', security: 'セキュリティ', utility: 'ユーティリティ'
         };
 
         // --- State ---
@@ -1937,7 +1808,7 @@
             if (!container) return;
             
             if (chatMessages.length === 0) {
-                container.innerHTML = '<div style="text-align: center; color: #888; font-size: 13px; margin-top: 20px;">まだメッセージはありません<br>一緒に遊ぶ人を募集してみましょう！</div>';
+                container.innerHTML = '<div style="text-align: center; color: #888; font-size: 13px; margin-top: 20px;">まだメッセージはありません<br>ツールについて気軽に相談してみましょう！</div>';
                 return;
             }
 
@@ -2019,7 +1890,7 @@
             
             // Populate game select
             const select = document.getElementById('chat-game-select');
-            let options = '<option value="">ゲーム指定なし</option>';
+            let options = '<option value="">ツール指定なし</option>';
             games.forEach(g => {
                 options += `<option value="${g.id}">${escapeHtml(g.name)}</option>`;
             });
@@ -2171,23 +2042,6 @@
                 `;
             }
 
-            // Player filter
-            const playerContainer = document.getElementById('player-filter');
-            let playerHtml = `<div class="player-chip ${currentPlayerFilter === 'all' ? 'active' : ''}" data-players="all" onclick="App.setPlayerFilter('all')">全人数</div>`;
-
-            const filterOptions = [
-                { id: '1', label: '1人', isMulti: false },
-                { id: '2', label: '2人', isMulti: true },
-                { id: '3', label: '3人', isMulti: true },
-                { id: '4', label: '4人', isMulti: true },
-                { id: '5plus', label: '5人以上', isMulti: true }
-            ];
-
-            filterOptions.forEach(opt => {
-                const isActive = currentPlayerFilter === opt.id;
-                playerHtml += `<div class="player-chip ${opt.isMulti ? 'multi' : ''} ${isActive ? 'active' : ''}" data-players="${opt.id}" onclick="App.setPlayerFilter('${opt.id}')">${escapeHtml(opt.label)}</div>`;
-            });
-            playerContainer.innerHTML = playerHtml;
         }
 
         function renderGames() {
@@ -2200,31 +2054,11 @@
                 const matchesSearch = !searchTerm || game.name.toLowerCase().includes(searchTerm);
                 const matchesCategory = currentCategory === 'all' || game.category === currentCategory;
 
-                let matchesPlayers = true;
-                if (currentPlayerFilter !== 'all') {
-                    const gameMin = parseInt(game.playersMin, 10) || 0;
-                    const gameMax = parseInt(game.playersMax, 10) || 0;
-                    
-                    if (gameMin === 0 && gameMax === 0) {
-                        matchesPlayers = false; 
-                    } else {
-                        const gMin = gameMin || 1;
-                        const gMax = gameMax || gMin;
-                        
-                        if (currentPlayerFilter === '5plus') {
-                            matchesPlayers = (gMax >= 5);
-                        } else {
-                            const target = parseInt(currentPlayerFilter, 10);
-                            matchesPlayers = (target >= gMin && target <= gMax);
-                        }
-                    }
-                }
-
-                return matchesSearch && matchesCategory && matchesPlayers;
+                return matchesSearch && matchesCategory;
             });
 
             if (isRankingActive) {
-                // ランキング有効時はプレイ回数順（降順）
+                // ランキング有効時は起動回数順（降順）
                 filteredGames.sort((a, b) => (b.playCount || 0) - (a.playCount || 0));
             } else { filteredGames.sort((a, b) => { if (a.isPinned && !b.isPinned) return -1; if (!a.isPinned && b.isPinned) return 1; if (a.hasUpdate && !b.hasUpdate) return -1; if (!a.hasUpdate && b.hasUpdate) return 1; return (b.lastPlayed || 0) - (a.lastPlayed || 0); }); }
 
@@ -2232,8 +2066,8 @@
                 grid.innerHTML = `
                     <div class="empty-state">
                         <div class="empty-state-icon">🔍</div>
-                        <div class="empty-state-text">該当するゲームが見つかりません</div>
-                        <div class="empty-state-hint">検索条件を変更するか、新しいゲームを追加してください</div>
+                        <div class="empty-state-text">該当するツールが見つかりません</div>
+                        <div class="empty-state-hint">検索条件を変更するか、新しいツールを追加してください</div>
                     </div>`;
                 return;
             }
@@ -2316,29 +2150,6 @@
 
                 const imgUrl = game.image || generatePlaceholderImage(game.name);
 
-                let playerBadge = '';
-                if (game.playersMin || game.playersMax) {
-                    const min = game.playersMin ? parseInt(game.playersMin, 10) : null;
-                    const max = game.playersMax ? parseInt(game.playersMax, 10) : null;
-                    const isMulti = (min && min > 1) || (max && max > 1) || (!min && max && max > 1);
-
-                    let label = '';
-                    if (min && max) {
-                        if (min === max) {
-                            label = min >= 999 ? '♾️' : min + '人';
-                        } else {
-                            const maxLabel = max >= 999 ? '♾️' : max;
-                            label = min + '〜' + maxLabel + '人';
-                        }
-                    } else if (min) {
-                        label = min >= 999 ? '♾️' : min + '人〜';
-                    } else if (max) {
-                        label = max >= 999 ? '〜♾️' : '〜' + max + '人';
-                    }
-
-                    playerBadge = `<span class="player-badge ${isMulti ? 'multi' : ''}">${label}</span>`;
-                }
-
                 let creatorBadge = '';
                 if (game.creator) {
                     creatorBadge = `<span class="creator-badge">${escapeHtml(game.creator)}</span>`;
@@ -2347,7 +2158,6 @@
                 card.innerHTML = `
                     ${badge}
                     ${activeBadge}
-                    ${playerBadge}
                     ${creatorBadge}
                     <button class="pin-btn" title="${game.isPinned ? '固定を解除' : '位置を固定'}" onclick="App.togglePin(${game.id}, event)">${game.isPinned ? '✖️' : '📌'}</button>
                     <button class="edit-btn" title="編集" onclick="App.openGameModal(${game.id}, event)" aria-label="${escapeHtml(game.name)}を編集">✎</button>
@@ -2374,10 +2184,10 @@
                 <div class="card-category" style="visibility: hidden;">..</div>
                 <div style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: flex; justify-content: center; align-items: center; font-size: 48px;">＋</div>
             `;
-            addCard.title = "新しいゲームを追加 (N)";
+            addCard.title = "新しいツールを追加 (N)";
             addCard.setAttribute('role', 'button');
             addCard.setAttribute('tabindex', '0');
-            addCard.setAttribute('aria-label', '新しいゲームを追加');
+            addCard.setAttribute('aria-label', '新しいツールを追加');
             addCard.onclick = () => openGameModal();
             addCard.addEventListener('keydown', e => { if (e.key === 'Enter') openGameModal(); });
             fragment.appendChild(addCard);
@@ -2438,7 +2248,7 @@
             categoryDragStartIndex = null;
         }
 
-        // === プレイ時に順番を入れ替える（ピン留め以外） ===
+        // === 起動時に順番を入れ替える（ピン留め以外） ===
         function launchGame(game) {
             if (!game.url) return;
             window.open(game.url, localConfig.openInNewTab ? '_blank' : '_self', 'noopener,noreferrer');
@@ -2448,7 +2258,7 @@
             readHistory[game.id] = Date.now();
             localStorage.setItem('toolReadHistory', JSON.stringify(readHistory));
 
-            // プレイ回数をインクリメント
+            // 起動回数をインクリメント
             game.playCount = (game.playCount || 0) + 1;
 
             // アクティブユーザー情報を更新（ユニークIDを使用）
@@ -2500,17 +2310,10 @@
             renderGames();
         }
 
-        let currentPlayerFilter = 'all';
-
-        function setPlayerFilter(filter) {
-            currentPlayerFilter = filter;
-            renderGames();
-        }
-
         // --- Drag & Drop (Games) ---
 
         function handleDragStart(e, index) {
-            if (els.searchInput.value.trim() !== '' || currentCategory !== 'all' || currentPlayerFilter !== 'all') {
+            if (els.searchInput.value.trim() !== '' || currentCategory !== 'all') {
                 e.preventDefault();
                 showToast('検索中またはフィルタ中は並び替えできません', 'warning');
                 return;
@@ -2616,7 +2419,6 @@
             if (e.key === 'Escape') {
                 els.searchInput.value = '';
                 els.searchInput.blur();
-                currentPlayerFilter = 'all';
                 currentCategory = 'all';
                 renderGames();
             }
@@ -2635,7 +2437,7 @@
             const deleteBtn = document.getElementById('btn-delete');
             const titleEl = document.getElementById('modal-title');
 
-            const defaultCategories = ['action', 'puzzle', 'rpg', 'shooter', 'sports', 'strategy', 'casual', 'retro'];
+            const defaultCategories = ['dev', 'network', 'monitor', 'admin', 'docs', 'data', 'security', 'utility'];
             const allUsedCategories = new Set(games.map(g => g.category).filter(Boolean));
             
             let optionsHtml = `<option value="">未分類</option>`;
@@ -2657,7 +2459,7 @@
             if (id !== null) {
                 const game = games.find(g => g.id == id);
                 if (!game) return;
-                titleEl.textContent = 'ゲームを編集';
+                titleEl.textContent = 'ツールを編集';
                 idInput.value = game.id;
                 nameInput.value = game.name;
                 urlInput.value = game.url;
@@ -2673,13 +2475,11 @@
                     document.getElementById('game-category-new').style.display = 'none';
                     document.getElementById('game-category-new').value = '';
                 }
-                document.getElementById('game-players-min').value = game.playersMin || '';
-                document.getElementById('game-players-max').value = game.playersMax || '';
                 document.getElementById('game-creator').value = game.creator || '';
                 deleteBtn.style.display = 'flex';
                 deleteBtn.onclick = () => deleteGame(id);
             } else {
-                titleEl.textContent = 'ゲームを追加';
+                titleEl.textContent = 'ツールを追加';
                 idInput.value = '';
                 nameInput.value = '';
                 urlInput.value = '';
@@ -2687,8 +2487,6 @@
                 categoryInput.value = '';
                 document.getElementById('game-category-new').style.display = 'none';
                 document.getElementById('game-category-new').value = '';
-                document.getElementById('game-players-min').value = '';
-                document.getElementById('game-players-max').value = '';
                 document.getElementById('game-creator').value = '';
                 deleteBtn.style.display = 'none';
             }
@@ -2715,8 +2513,6 @@
             }
             let image = document.getElementById('game-image').value.trim();
 
-            const playersMin = document.getElementById('game-players-min').value;
-            const playersMax = document.getElementById('game-players-max').value;
             const creator = document.getElementById('game-creator').value.trim();
 
             if (!name || !url) {
@@ -2733,32 +2529,32 @@
                     }
                     const updatedGame = { 
                         ...games[index], 
-                        id, name, url, image, category, playersMin, playersMax, creator,
+                        id, name, url, image, category, creator,
                         updatedAt: Date.now()
                     };
                     
                     // 編集された場合は位置を維持
                     games[index] = updatedGame;
-                    showToast('ゲームを更新しました', 'success');
+                    showToast('ツールを更新しました', 'success');
                 }
             } else {
                 if (!image) image = generatePlaceholderImage(name);
                 const newGame = {
                     id: games.length > 0 ? Math.max(...games.map(g => g.id)) + 1 : 1,
-                    name, url, image, category, playersMin, playersMax, creator,
+                    name, url, image, category, creator,
                     createdAt: Date.now(),
                     updatedAt: Date.now(),
                     isPinned: false
                 };
                 
-                // 新規ゲームを先頭（ピン留めの下）に追加
+                // 新規ツールを先頭（ピン留めの下）に追加
                 let insertIndex = 0;
                 while (insertIndex < games.length && games[insertIndex].isPinned) {
                     insertIndex++;
                 }
                 games.splice(insertIndex, 0, newGame);
                 
-                showToast('ゲームを追加しました', 'success');
+                showToast('ツールを追加しました', 'success');
             }
 
             renderGames();
@@ -2773,7 +2569,7 @@
                 renderGames();
                 closeGameModal();
                 saveGamesToServer();
-                showToast('ゲームを削除しました', 'success');
+                showToast('ツールを削除しました', 'success');
             }
         }
 
@@ -3249,7 +3045,7 @@
                         console.log('Recovering games from local storage...', localPlayCount, '>', serverPlayCount);
                         games = localGames;
                         saveGamesToServer();
-                        showToast('ローカルからプレイ回数データを自動復元しました', 'success');
+                        showToast('ローカルから起動回数データを自動復元しました', 'success');
                         renderGames();
                     }
                 } catch(e) {}
@@ -3643,7 +3439,7 @@
             document.getElementById('share-name').value = document.getElementById('chat-name').value || localStorage.getItem('chat_name') || '';
             
             const shareSelect = document.getElementById('share-game-select');
-            let options = '<option value="">ゲーム指定なし</option>';
+            let options = '<option value="">ツール指定なし</option>';
             games.forEach(g => {
                 options += `<option value="${g.id}">${escapeHtml(g.name)}</option>`;
             });
@@ -3824,7 +3620,7 @@
             init,
             openGameModal, closeGameModal, saveGame, deleteGame, deleteCategory,
             openSettings, closeSettings, saveSettings, exportData, importData, handleGridSizeChange,
-            setCategory, setPlayerFilter, handleCategoryChange, togglePin, toggleRanking,
+            setCategory, handleCategoryChange, togglePin, toggleRanking,
             handleCategoryDragStart, handleCategoryDragOver, handleCategoryDrop, handleCategoryDragEnd,
             openChat, closeChat, sendChatMessage, openChatGame, deleteChatMessage,
             loadServerBackups, createServerBackup, restoreServerBackup, deleteServerBackup,
@@ -3840,7 +3636,7 @@
         App.init();
 
         // マウスホイールで横スクロールできるようにする
-        const filters = document.querySelectorAll('.category-filter, .player-filter');
+        const filters = document.querySelectorAll('.category-filter');
         filters.forEach(ele => {
             ele.addEventListener('wheel', (e) => {
                 if (e.deltaY !== 0) {
