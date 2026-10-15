@@ -62,6 +62,11 @@ if ($action === 'react') {
         $chat = json_decode(file_get_contents($file_path), true) ?: [];
     }
 
+    // リアクションは短時間のロックで更新競合（lost update）を防ぐ
+    $lock_file = __DIR__ . '/share.lock';
+    $fp_lock = @fopen($lock_file, 'c');
+    $locked = $fp_lock && flock($fp_lock, LOCK_EX);
+
     $updated = false;
     foreach ($chat as &$msg) {
         if (isset($msg['timestamp']) && $msg['timestamp'] === $timestamp) {
@@ -72,6 +77,7 @@ if ($action === 'react') {
                 $msg['reactions'][$emoji] = [];
             }
             
+            if (!is_array($msg['reactions'][$emoji])) $msg['reactions'][$emoji] = [];
             $idx = array_search($clientId, $msg['reactions'][$emoji]);
             if ($idx !== false) {
                 // Remove reaction
@@ -91,6 +97,11 @@ if ($action === 'react') {
     if ($updated) {
         @file_put_contents($file_path, json_encode($chat, JSON_UNESCAPED_UNICODE));
         @chmod($file_path, 0666);
+    }
+    if ($locked) { flock($fp_lock, LOCK_UN); }
+    if ($fp_lock) { fclose($fp_lock); }
+
+    if ($updated) {
         echo json_encode(["status" => "success"]);
     } else {
         http_response_code(404);
@@ -101,6 +112,43 @@ if ($action === 'react') {
 
 if ($action === 'delete') {
     $timestamp_to_delete = isset($decoded['timestamp']) ? intval($decoded['timestamp']) : 0;
+    $id_to_delete = isset($decoded['id']) ? trim($decoded['id']) : '';
+
+    // ID指定: 競合防止のロック付きで削除
+    if ($id_to_delete !== '') {
+        $lock_file = __DIR__ . '/share.lock';
+        $fp_lock = @fopen($lock_file, 'c');
+        $locked = $fp_lock && flock($fp_lock, LOCK_EX);
+
+        $chat_data = [];
+        if (file_exists($file_path)) {
+            $raw = file_get_contents($file_path);
+            $chat_data = json_decode($raw, true) ?: [];
+        }
+        if (!is_array($chat_data)) $chat_data = [];
+        $found = false;
+        $chat_data = array_values(array_filter($chat_data, function($msg) use ($id_to_delete, &$found) {
+            if (isset($msg['id']) && $msg['id'] === $id_to_delete) {
+                $found = true;
+                return false;
+            }
+            return true;
+        }));
+
+        @file_put_contents($file_path, json_encode($chat_data, JSON_UNESCAPED_UNICODE));
+        @chmod($file_path, 0666);
+        if ($locked) { flock($fp_lock, LOCK_UN); }
+        if ($fp_lock) { fclose($fp_lock); }
+
+        if ($found) {
+            echo json_encode(["status" => "success"]);
+        } else {
+            http_response_code(404);
+            echo json_encode(["status" => "error", "message" => "Message not found"]);
+        }
+        exit;
+    }
+
     if ($timestamp_to_delete > 0) {
         $chat_data = [];
         if (file_exists($file_path)) {
@@ -182,10 +230,29 @@ if ($is_multipart && isset($_FILES['image']) && $_FILES['image']['error'] === UP
         @chmod($uploadDir, 0777);
     }
     
+    // サイズ上限 4MB
+    if ($_FILES['image']['size'] > 4 * 1024 * 1024) {
+        $response["message"] = "画像サイズが4MBを超えるため保存できません";
+        echo json_encode($response, JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+
     // Check if it's an image
-    $check = getimagesize($_FILES['image']['tmp_name']);
+    $check = @getimagesize($_FILES['image']['tmp_name']);
     if($check !== false) {
-        $ext = pathinfo($_FILES['image']['name'], PATHINFO_EXTENSION);
+        // 拡張子はMIME型から決定（ファイル名の .php 等を許可しない）
+        $ext_map = [
+            IMAGETYPE_PNG  => 'png',
+            IMAGETYPE_JPEG => 'jpg',
+            IMAGETYPE_GIF  => 'gif',
+            IMAGETYPE_WEBP => 'webp',
+        ];
+        $ext = $ext_map[$check[2]] ?? null;
+        if (!$ext) {
+            $response["message"] = "PNG・JPEG・GIF・WEBPのみ対応しています";
+            echo json_encode($response, JSON_UNESCAPED_UNICODE);
+            exit;
+        }
         $filename = uniqid('img_') . '.' . $ext;
         $targetPath = $uploadDir . $filename;
         if (@move_uploaded_file($_FILES['image']['tmp_name'], $targetPath)) {
@@ -203,8 +270,19 @@ if ($is_multipart && isset($_FILES['image']) && $_FILES['image']['error'] === UP
     }
 }
 
-$clientId = isset($decoded['clientId']) ? trim($decoded['clientId']) : null;
-$replyTo = isset($decoded['replyTo']) ? (is_string($decoded['replyTo']) ? json_decode($decoded['replyTo'], true) : $decoded['replyTo']) : null;
+$clientId = isset($decoded['clientId']) ? mb_substr(trim($decoded['clientId']), 0, 64) : null;
+$replyTo = null;
+if (isset($decoded['replyTo'])) {
+    $rt = $decoded['replyTo'];
+    if (is_string($rt)) $rt = json_decode($rt, true);
+    if (is_array($rt)) {
+        $replyTo = [
+            'timestamp' => isset($rt['timestamp']) ? intval($rt['timestamp']) : 0,
+            'name' => isset($rt['name']) ? mb_substr(trim($rt['name']), 0, 30, 'UTF-8') : '',
+            'message' => isset($rt['message']) ? mb_substr(trim($rt['message']), 0, 100, 'UTF-8') : ''
+        ];
+    }
+}
 
 $new_message = [
     'id' => uniqid('msg_'),

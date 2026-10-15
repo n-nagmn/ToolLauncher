@@ -134,12 +134,25 @@ if ($fp_lock && flock($fp_lock, LOCK_EX)) {
             }
         }
 
-        $game_id = is_int($game['id']) ? $game['id'] : intval($game['id']);
+        // IDは文字列として保持（Date.now()等の大きな数値が32bitに切り詰められないようにする）
+        $game_id = $game['id'];
+        if (is_numeric($game_id)) {
+            $game_id = (string)intval($game_id);
+        } else {
+            $game_id = trim((string)$game_id);
+        }
+        if ($game_id === '') {
+            $response["message"] = "インデックス {$index} の id が不正です";
+            echo json_encode($response, JSON_UNESCAPED_UNICODE);
+            flock($fp_lock, LOCK_UN);
+            fclose($fp_lock);
+            exit;
+        }
         
-        // 既存のサーバー側データを取得
-        $server_game = isset($existing_active_map[$game_id]) ? null : null; // マップからはactiveUsersしか取れないので再検索
+        // 既存のサーバー側データを取得（IDは文字列で厳密比較）
+        $server_game = null;
         foreach ($existing_games as $ex_g) {
-            if ($ex_g['id'] == $game_id) {
+            if (isset($ex_g['id']) && (string)$ex_g['id'] === $game_id) {
                 $server_game = $ex_g;
                 break;
             }
@@ -179,11 +192,25 @@ if ($fp_lock && flock($fp_lock, LOCK_EX)) {
         $server_play_count = $server_game && isset($server_game['playCount']) ? intval($server_game['playCount']) : 0;
         $merged_play_count = max($client_play_count, $server_play_count);
 
+        // URL検証: 絶対URLのみ構文チェック。相対パスやuploads/等の内部パスはそのまま許可
+        $clean_url = $is_outdated ? $server_game['url'] : trim($game['url']);
+        if (!$is_outdated) {
+            $has_scheme = strpos($clean_url, '://') !== false;
+            $is_http = preg_match('#^https?://#i', $clean_url);
+            $has_traversal = preg_match('#(^|/)\.\.(/|$)#', $clean_url);
+            if (($has_scheme && !$is_http)
+                || ($is_http && !filter_var($clean_url, FILTER_VALIDATE_URL))
+                || $has_traversal) {
+                // パストラバーサル不可 / http・https以外のスキーム拒否 / 絶対URLは構文チェック
+                $clean_url = '';
+            }
+        }
+
         $validated[] = [
             'id' => $game_id,
             'name' => $is_outdated ? $server_game['name'] : htmlspecialchars(mb_substr(trim($game['name']), 0, 100), ENT_QUOTES, 'UTF-8'),
-            'url' => $is_outdated ? $server_game['url'] : (filter_var(trim($game['url']), FILTER_VALIDATE_URL) ?: ''),
-            'image' => $is_outdated ? $server_game['image'] : (isset($game['image']) ? htmlspecialchars(trim($game['image']), ENT_QUOTES, 'UTF-8') : ''),    
+            'url' => $clean_url,
+            'image' => $is_outdated ? $server_game['image'] : (isset($game['image']) ? htmlspecialchars(trim($game['image']), ENT_QUOTES, 'UTF-8') : ''),
             'category' => $is_outdated ? $server_game['category'] : (isset($game['category']) ? htmlspecialchars(mb_substr(trim($game['category']), 0, 50), ENT_QUOTES, 'UTF-8') : ''),
             'playersMin' => $is_outdated ? $server_game['playersMin'] : (isset($game['playersMin']) ? max(0, intval($game['playersMin'])) : 0),
             'playersMax' => $is_outdated ? $server_game['playersMax'] : (isset($game['playersMax']) ? max(0, intval($game['playersMax'])) : 0),

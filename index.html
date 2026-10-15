@@ -1348,7 +1348,15 @@
 
         // --- State ---
         let serverConfig = { ...DEFAULT_SERVER_CONFIG };
-        let localConfig = JSON.parse(localStorage.getItem('tool_local_config')) || { ...DEFAULT_LOCAL_CONFIG };
+        let localConfig;
+        try {
+            localConfig = JSON.parse(localStorage.getItem('tool_local_config'));
+        } catch(e) {
+            localConfig = null;
+        }
+        if (!localConfig || typeof localConfig !== 'object' || Array.isArray(localConfig)) {
+            localConfig = { ...DEFAULT_LOCAL_CONFIG };
+        }
         
         let games = [];
         let customStamps = [];
@@ -1358,19 +1366,29 @@
             try {
                 const res = await fetch('post_stamps.php');
                 if (res.ok) {
-                    customStamps = await res.json();
-                    renderReactionPicker();
-                    renderSettingsStamps();
+                    const data = await res.json();
+                    if (Array.isArray(data)) {
+                        customStamps = data;
+                        renderReactionPicker();
+                        renderSettingsStamps();
+                    }
                 }
             } catch(e) { console.error(e); }
         }
 
         function renderReactionPicker() {
             const picker = document.getElementById('reaction-picker');
+            if (!picker) return;
             const allStamps = [...defaultStamps, ...customStamps];
-            picker.innerHTML = allStamps.map(s => `
-                <button class="picker-emoji" onclick="App.reactMessage('${escapeHtml(s)}')" style="background:none;border:none;cursor:pointer;font-size:18px;padding:4px;transition:transform 0.2s; display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px;" onmouseover="this.style.transform='scale(1.2)'" onmouseout="this.style.transform='scale(1)'">${App.renderStampContent(s)}</button>
-            `).join('');
+            picker.innerHTML = allStamps.map(s => {
+                if (typeof s !== 'string') return '';
+                const display = s.startsWith('uploads/') || s.startsWith('http://') || s.startsWith('https://')
+                    ? '🖼️' : escapeHtml(s);
+                const safeStamp = escapeHtml(s).replace(/'/g, "\\'");
+                return `
+                <button class="picker-emoji" onclick="App.reactMessage('${safeStamp}')" style="background:none;border:none;cursor:pointer;font-size:18px;padding:4px;transition:transform 0.2s; display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px;" onmouseover="this.style.transform='scale(1.2)'" onmouseout="this.style.transform='scale(1)'">${display}</button>
+            `;
+            }).join('');
         }
 
         function renderSettingsStamps() {
@@ -1385,8 +1403,9 @@
         }
 
                 function renderStampContent(s) {
+            if (typeof s !== 'string') return '';
             if (s.startsWith('uploads/') || s.startsWith('http://') || s.startsWith('https://')) {
-                return `<img src="${escapeHtml(s)}" style="max-height: 24px; max-width: 24px; vertical-align: middle; border-radius: 4px;" alt="stamp">`;
+                return `<img src="${escapeHtml(s)}" onerror="this.replaceWith(document.createTextNode('🖼️'))" style="max-height: 24px; max-width: 24px; vertical-align: middle; border-radius: 4px;" alt="stamp">`;
             }
             return escapeHtml(s);
         }
@@ -1418,13 +1437,17 @@
         function addCustomImageStamp(event) {
             const file = event.target.files[0];
             if (file) uploadCustomImageStamp(file);
-            event.target.value = '';
+            setTimeout(() => { event.target.value = ''; }, 0);
         }
 
         async function addCustomStamp() {
             const input = document.getElementById('new-stamp-input');
             const val = input.value.trim();
             if(!val) return;
+            if (val.length > 10) {
+                showToast('スタンプ名は10文字までです', 'error');
+                return;
+            }
             if(defaultStamps.includes(val) || customStamps.includes(val)) {
                 showToast('既に存在するスタンプです', 'error');
                 return;
@@ -1565,9 +1588,23 @@
             `;
 
             const removeFromCache = () => {
-                let activeNotifs = JSON.parse(localStorage.getItem('activeChatNotifs_tool') || '{}');
+                let activeNotifs;
+                try { activeNotifs = JSON.parse(localStorage.getItem('activeChatNotifs_tool') || '{}'); } catch(e) { activeNotifs = {}; }
+                if (!activeNotifs || typeof activeNotifs !== 'object') activeNotifs = {};
                 delete activeNotifs[notifId];
-                localStorage.setItem('activeChatNotifs_tool', JSON.stringify(activeNotifs));
+                try { localStorage.setItem('activeChatNotifs_tool', JSON.stringify(activeNotifs)); } catch(e) {}
+            };
+
+            const dismissMsg = (storageKey) => {
+                if (!msg.id) return;
+                let dismissed;
+                try { dismissed = JSON.parse(localStorage.getItem(storageKey) || '[]'); } catch(e) { dismissed = []; }
+                if (!Array.isArray(dismissed)) dismissed = [];
+                if (!dismissed.includes(msg.id)) {
+                    dismissed.push(msg.id);
+                    if (dismissed.length > 200) dismissed = dismissed.slice(-200);
+                    try { localStorage.setItem(storageKey, JSON.stringify(dismissed)); } catch(e) {}
+                }
             };
 
             const closeBtn = notif.querySelector('.notif-close-btn');
@@ -1577,13 +1614,7 @@
                     notif.classList.add('hiding');
                     setTimeout(() => notif.remove(), 300);
                     removeFromCache();
-                    const storageKey = isShare ? 'dismissedShareNotifs' : 'dismissedChatNotifs';
-                    let dismissed = JSON.parse(localStorage.getItem(storageKey) || '[]');
-                    if (!dismissed.includes(msg.id)) {
-                        dismissed.push(msg.id);
-                        if (dismissed.length > 200) dismissed = dismissed.slice(-200);
-                        localStorage.setItem(storageKey, JSON.stringify(dismissed));
-                    }
+                    dismissMsg(isShare ? 'dismissedShareNotifs' : 'dismissedChatNotifs');
                 };
             }
 
@@ -1592,27 +1623,34 @@
                 notif.classList.add('hiding');
                 setTimeout(() => notif.remove(), 300);
                 removeFromCache();
-                const storageKey = isShare ? 'dismissedShareNotifs' : 'dismissedChatNotifs';
-                let dismissed = JSON.parse(localStorage.getItem(storageKey) || '[]');
-                if (!dismissed.includes(msg.id)) {
-                    dismissed.push(msg.id);
-                    if (dismissed.length > 200) dismissed = dismissed.slice(-200);
-                    localStorage.setItem(storageKey, JSON.stringify(dismissed));
-                }
+                dismissMsg(isShare ? 'dismissedShareNotifs' : 'dismissedChatNotifs');
                 if (msg.gameId) {
                     openChatGame(msg.gameId);
                 }
             };
 
             // Save to active notifications cache
-            let activeNotifs = JSON.parse(localStorage.getItem('activeChatNotifs_tool') || '{}');
-            activeNotifs[notifId] = { msg, isShare, timestamp: Date.now() };
+            let activeNotifs;
+            try { activeNotifs = JSON.parse(localStorage.getItem('activeChatNotifs_tool') || '{}'); } catch(e) { activeNotifs = {}; }
+            if (!activeNotifs || typeof activeNotifs !== 'object') activeNotifs = {};
+            // msg を保存する前に blob: URL を除去（session 限定であり、reload 後に無効になるため）
+            const safeMsg = { ...msg };
+            if (safeMsg.imageUrl && safeMsg.imageUrl.startsWith('blob:')) safeMsg.imageUrl = null;
+            activeNotifs[notifId] = { msg: safeMsg, isShare, timestamp: Date.now() };
             // Prune very old active notifications (e.g., older than 3 days)
             const threeDaysAgo = Date.now() - 3 * 24 * 60 * 60 * 1000;
             for (let key in activeNotifs) {
                 if (activeNotifs[key].timestamp < threeDaysAgo) delete activeNotifs[key];
             }
-            localStorage.setItem('activeChatNotifs_tool', JSON.stringify(activeNotifs));
+            try {
+                localStorage.setItem('activeChatNotifs_tool', JSON.stringify(activeNotifs));
+            } catch (e) {
+                // ストレージが埋まった場合: 古いものを削除してリトライ
+                for (let key in activeNotifs) {
+                    if (key !== notifId) delete activeNotifs[key];
+                }
+                try { localStorage.setItem('activeChatNotifs_tool', JSON.stringify(activeNotifs)); } catch(e2) {}
+            }
 
             container.prepend(notif);
 
@@ -1638,7 +1676,13 @@
         }
 
         function restoreActiveNotifications() {
-            const activeNotifs = JSON.parse(localStorage.getItem('activeChatNotifs_tool') || '{}');
+            let activeNotifs;
+            try {
+                activeNotifs = JSON.parse(localStorage.getItem('activeChatNotifs_tool') || '{}');
+            } catch (e) {
+                activeNotifs = {};
+            }
+            if (!activeNotifs || typeof activeNotifs !== 'object') return;
             // Sort by timestamp to preserve order
             const sorted = Object.values(activeNotifs).sort((a, b) => a.msg.timestamp - b.msg.timestamp);
             sorted.forEach(item => {
@@ -1701,6 +1745,31 @@
 
         // --- Server Communication ---
 
+        let _readHistoryCache = null;
+        function getReadHistory() {
+            if (_readHistoryCache === null) {
+                let parsed;
+                try { parsed = JSON.parse(localStorage.getItem('toolReadHistory')); } catch(e) { parsed = null; }
+                _readHistoryCache = (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : {};
+            }
+            return _readHistoryCache;
+        }
+        function setReadHistoryEntry(gameId, ts) {
+            const h = getReadHistory();
+            h[gameId] = ts;
+            try {
+                localStorage.setItem('toolReadHistory', JSON.stringify(h));
+            } catch(e) {
+                // クォータ超過時は最古のエントリを削ってリトライ
+                const keys = Object.keys(h);
+                keys.sort((a, b) => h[a] - h[b]);
+                for (let i = 0; i < Math.max(1, Math.floor(keys.length / 4)); i++) {
+                    delete h[keys[i]];
+                }
+                try { localStorage.setItem('toolReadHistory', JSON.stringify(h)); } catch(e2) {}
+            }
+        }
+
         async function saveGamesToServer() {
             isSaving = true;
             try {
@@ -1722,6 +1791,7 @@
             } catch (error) {
                 console.error('Save error:', error);
                 showToast('サーバー保存に失敗: ' + error.message, 'error', 5000);
+                // ローカルバックアップは成功した最後のデータとして保持
                 isSaving = false;
                 return false;
             }
@@ -1774,6 +1844,13 @@
                             )) {
                                 notif.classList.add('hiding');
                                 setTimeout(() => notif.remove(), 300);
+                                let activeNotifs;
+                                try { activeNotifs = JSON.parse(localStorage.getItem('activeChatNotifs_tool') || '{}'); } catch(e) { activeNotifs = {}; }
+                                const notifId = notif.id ? notif.id.replace('notif-', '') : '';
+                                if (notifId) {
+                                    delete activeNotifs[notifId];
+                                    try { localStorage.setItem('activeChatNotifs_tool', JSON.stringify(activeNotifs)); } catch(e) {}
+                                }
                             }
                         });
 
@@ -1784,7 +1861,9 @@
                                 showChatNotification(msg);
                             });
                         } else {
-                            let dismissed = JSON.parse(localStorage.getItem('dismissedChatNotifs') || '[]');
+                            let dismissed;
+                            try { dismissed = JSON.parse(localStorage.getItem('dismissedChatNotifs') || '[]'); } catch(e) { dismissed = []; }
+                            if (!Array.isArray(dismissed)) dismissed = [];
                             newMessages.forEach(msg => {
                                 if (msg.clientId !== myClientId && !dismissed.includes(msg.id)) {
                                     showChatNotification(msg);
@@ -1835,7 +1914,7 @@
                                 
                                 <span>${timeStr}</span>
                             </div>
-                            <button onclick="App.deleteChatMessage(${msg.timestamp})" title="削除" style="background: none; border: none; color: #ff5252; cursor: pointer; font-size: 14px; padding: 0 4px; opacity: 0.6;">×</button>
+                            <button onclick="App.deleteChatMessage('${escapeHtml(String(msg.id))}')" title="削除" style="background: none; border: none; color: #ff5252; cursor: pointer; font-size: 14px; padding: 0 4px; opacity: 0.6;">×</button>
                         </div>
                         ${gameHtml}
                         ${(() => { let msgText = msg.message || ''; if (msgText === '') return ''; if (msgText.toLowerCase().startsWith('/a')) { return `<div class="chat-message-text aa-font">${escapeHtml(msgText.replace(/^\/a(?:\r?\n| )?/i, ''))}</div>`; } return `<div class="chat-message-text">${escapeHtml(msgText)}</div>`; })()}
@@ -1843,8 +1922,10 @@
                         
                         <div style="display: flex; gap: 4px; margin-top: 6px; flex-wrap: wrap;">
                             ${Object.keys(msg.reactions || {}).map(emoji => {
-                                const count = msg.reactions[emoji].length;
-                                const reacted = msg.reactions[emoji].includes(myClientId);
+                                const clients = msg.reactions[emoji] || [];
+                                if (!Array.isArray(clients)) return '';
+                                const count = clients.length;
+                                const reacted = clients.includes(myClientId);
                                 if (count === 0) return '';
                                 return `<button class="reaction-btn ${reacted ? 'reacted' : ''}" onclick="App.reactMessage('${emoji}', ${msg.timestamp}, false)">${App.renderStampContent(emoji)} <span>${count}</span></button>`;
                             }).join('')}
@@ -1955,7 +2036,7 @@
             
             // Optimistic update
             const tempMsg = {
-                id: 'temp_' + Date.now(),
+                id: 'temp_chat_' + Date.now(),
                 name: name,
                 message: message,
                 gameId: gameId,
@@ -1981,9 +2062,11 @@
                     fetchChat();
                 } else {
                     showToast('チャット送信失敗', 'error');
+                    rollbackChatMessage(tempMsg);
                 }
             } catch (e) {
                 showToast('通信エラー', 'error');
+                rollbackChatMessage(tempMsg);
             }
         }
 
@@ -1999,6 +2082,7 @@
         function renderFilters() {
             // Category filter
             const catContainer = document.getElementById('category-filter');
+            if (!catContainer) return;
             const availableCategories = Array.from(new Set(games.map(g => g.category).filter(Boolean)));
             
             // サーバーから取得した順序に基づいて並び替え
@@ -2046,9 +2130,10 @@
 
         function renderGames() {
             const grid = els.grid;
+            if (!grid) return;
             grid.innerHTML = '';
 
-            const searchTerm = els.searchInput.value.toLowerCase().trim();
+            const searchTerm = els.searchInput ? els.searchInput.value.toLowerCase().trim() : '';
             
             filteredGames = games.filter(game => {
                 const matchesSearch = !searchTerm || game.name.toLowerCase().includes(searchTerm);
@@ -2073,7 +2158,7 @@
             }
 
             const fragment = document.createDocumentFragment();
-            const readHistory = JSON.parse(localStorage.getItem('toolReadHistory')) || {};
+            const readHistory = getReadHistory();
 
             filteredGames.forEach((game, index) => {
                 const card = document.createElement('div');
@@ -2128,20 +2213,9 @@
                 let activeBadge = '';
                 if (isRankingActive) { const plays = game.playCount || 0; activeBadge = `<span class="active-badge" style="background: rgba(0, 0, 0, 0.8); color: #ffd700; border: 1px solid #ff4757; padding: 4px 8px; font-size: 12px; letter-spacing: 0.5px;">👑 ${plays}</span>`; } else if (lastPlayed > 0 && diffMs < 3600000) {
                     const diffMins = Math.floor(diffMs / 60000);
-                    
-                    // ユニークユーザー数のカウント（過去1時間以内）
-                    let activeUserCount = 0;
-                    if (game.activeUsers) {
-                        const oneHourAgo = now - 3600000;
-                        activeUserCount = Object.values(game.activeUsers).filter(ts => ts > oneHourAgo).length;
-                    }
-                    // もしアクティブユーザーがいない（データ不整合など）場合は最低1人とする
-                    if (activeUserCount === 0) activeUserCount = 1;
-
                     activeBadge = `
                         <span class="active-badge">
-                            ${diffMins}分前アクティブ<br>
-                            <span style="font-size: 9px; opacity: 0.8;">(${activeUserCount}人)</span>
+                            ${diffMins}分前アクティブ
                         </span>`;
                 }
 
@@ -2193,7 +2267,6 @@
             fragment.appendChild(addCard);
 
             grid.appendChild(fragment);
-            renderFilters();
         }
 
         // --- Pin Function ---
@@ -2225,6 +2298,8 @@
             if (categoryDragStartIndex === null || categoryDragStartIndex === dropIndex) return;
 
             const availableCategories = Array.from(new Set(games.map(g => g.category).filter(Boolean)));
+            if (categoryDragStartIndex < 0 || categoryDragStartIndex >= availableCategories.length ||
+                dropIndex < 0 || dropIndex >= availableCategories.length) return;
             const sortedCategories = [...availableCategories].sort((a, b) => {
                 const orderA = serverConfig.categoryOrder ? serverConfig.categoryOrder.indexOf(a) : -1;
                 const orderB = serverConfig.categoryOrder ? serverConfig.categoryOrder.indexOf(b) : -1;
@@ -2254,12 +2329,13 @@
             window.open(game.url, localConfig.openInNewTab ? '_blank' : '_self', 'noopener,noreferrer');
             
             // 個人の既読時刻を記録
-            const readHistory = JSON.parse(localStorage.getItem('toolReadHistory')) || {};
-            readHistory[game.id] = Date.now();
-            localStorage.setItem('toolReadHistory', JSON.stringify(readHistory));
+            setReadHistoryEntry(game.id, Date.now());
 
             // 起動回数をインクリメント
             game.playCount = (game.playCount || 0) + 1;
+
+            // ローカルバックアップも更新
+            try { localStorage.setItem('games_backup_tool', JSON.stringify(games)); } catch(e) {}
 
             // アクティブユーザー情報を更新（ユニークIDを使用）
             const userId = getUniqueUserId();
@@ -2350,6 +2426,8 @@
             card.style.borderColor = '';
 
             if (dragStartIndex === null || dragStartIndex === dropIndex) return;
+            if (dragStartIndex < 0 || dragStartIndex >= filteredGames.length ||
+                dropIndex < 0 || dropIndex >= filteredGames.length) return;
 
             // フィルター適用後のリストを元に、元の games 配列を操作
             const movedId = filteredGames[dragStartIndex].id;
@@ -2357,6 +2435,7 @@
             
             const fromIndex = games.findIndex(g => g.id === movedId);
             const toIndex = games.findIndex(g => g.id === targetId);
+            if (fromIndex === -1 || toIndex === -1) return;
 
             const [item] = games.splice(fromIndex, 1);
             games.splice(toIndex, 0, item);
@@ -2521,8 +2600,8 @@
             }
 
             if (idStr) {
-                const id = parseInt(idStr, 10);
-                const index = games.findIndex(g => g.id == id);
+                const id = String(idStr).trim();
+                const index = games.findIndex(g => String(g.id) === id);
                 if (index !== -1) {
                     if (!image) {
                         image = (games[index].name !== name) ? generatePlaceholderImage(name) : games[index].image;
@@ -2540,7 +2619,7 @@
             } else {
                 if (!image) image = generatePlaceholderImage(name);
                 const newGame = {
-                    id: games.length > 0 ? Math.max(...games.map(g => g.id)) + 1 : 1,
+                    id: Date.now(),
                     name, url, image, category, creator,
                     createdAt: Date.now(),
                     updatedAt: Date.now(),
@@ -2558,6 +2637,7 @@
             }
 
             renderGames();
+            renderFilters();
             closeGameModal();
             saveGamesToServer();
         }
@@ -2567,6 +2647,7 @@
             if (game) {
                 games = games.filter(g => g.id !== id);
                 renderGames();
+                renderFilters();
                 closeGameModal();
                 saveGamesToServer();
                 showToast('ツールを削除しました', 'success');
@@ -2610,7 +2691,8 @@
 
             if (isUpdated) {
                 saveGamesToServer(); 
-                renderGames();       
+                renderGames();
+                renderFilters();       
             }
 
             if (currentCategory === cat) {
@@ -2619,6 +2701,7 @@
             }
 
             renderSettingsCategories(); 
+            renderFilters();
             showToast(`カテゴリー「${label}」を削除しました`, 'success');
         }
 
@@ -2757,6 +2840,7 @@
                         }
                         applyConfig();
                         renderGames();
+                        renderFilters();
                         saveGamesToServer();
                         closeSettings();
                         showToast('データのインポートが完了しました', 'success');
@@ -2801,7 +2885,7 @@
             try {
                 const res = await fetch('./manage_backups.php?action=list');
                 const data = await res.json();
-                if (data.status === 'success') {
+                if (data.status === 'success' && Array.isArray(data.backups)) {
                     if (data.backups.length === 0) {
                         select.innerHTML = '<option value="">バックアップがありません</option>';
                     } else {
@@ -2842,12 +2926,14 @@
 
         async function restoreServerBackup() {
             const select = document.getElementById('server-backup-select');
+            if (!select) return;
             const filenames = Array.from(select.selectedOptions).map(opt => opt.value).filter(v => v !== '');
             if (filenames.length !== 1) {
                 showToast('復元するバックアップを「1つだけ」選択してください', 'warning');
                 return;
             }
             const filename = filenames[0];
+            if (!confirm('選択したバックアップから復元します。現在のデータは上書きされますが、続行しますか？')) return;
             try {
                 const res = await fetch('./manage_backups.php', {
                     method: 'POST',
@@ -2868,11 +2954,13 @@
 
         async function deleteServerBackup() {
             const select = document.getElementById('server-backup-select');
+            if (!select) return;
             const filenames = Array.from(select.selectedOptions).map(opt => opt.value).filter(v => v !== '');
             if (filenames.length === 0) {
                 showToast('削除するバックアップを選択してください', 'warning');
                 return;
             }
+            if (!confirm(filenames.length + '件のバックアップを削除しますか？')) return;
             try {
                 let successCount = 0;
                 for (const filename of filenames) {
@@ -3000,43 +3088,73 @@
             els.settingsModal = document.getElementById('settings-modal');
             els.searchInput = document.getElementById('search-input');
 
-            try {
-                const res = await fetch('./config.json?t=' + Date.now());
-                if (res.ok) {
-                    const loadedConfig = await res.json();
+            const [configRes, gamesRes] = await Promise.allSettled([
+                fetch('./config.json?t=' + Date.now()),
+                fetch('./games.json?t=' + Date.now())
+            ]);
+
+            // Process config
+            if (configRes.status === 'fulfilled' && configRes.value.ok) {
+                try {
+                    const loadedConfig = await configRes.value.json();
                     serverConfig = { ...DEFAULT_SERVER_CONFIG, ...loadedConfig };
+                    // 保存バックアップ: サーバー設定のローカルフォールバック用
+                    try { localStorage.setItem('config_backup_tool', JSON.stringify(serverConfig)); } catch(e) {}
+                } catch (e) {
+                    console.warn('Config parse failed');
                 }
-            } catch (e) {
+            } else {
                 console.warn('Config load failed, using defaults');
                 const localBackup = localStorage.getItem('config_backup_tool');
-                if (localBackup) serverConfig = { ...DEFAULT_SERVER_CONFIG, ...JSON.parse(localBackup) };
-            }
-            applyConfig();
-
-            // Load Games
-            try {
-                const res = await fetch('./games.json?t=' + Date.now());
-                if (res.ok) {
-                    games = await res.json();
+                if (localBackup) {
+                    try {
+                        const parsed = JSON.parse(localBackup);
+                        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+                            serverConfig = { ...DEFAULT_SERVER_CONFIG, ...parsed };
+                        }
+                    } catch(e) {}
                 }
-                await fetchStamps();
-            } catch (e) {
+            }
+
+            // Process games
+            if (gamesRes.status === 'fulfilled' && gamesRes.value.ok) {
+                try {
+                    const loaded = await gamesRes.value.json();
+                    if (Array.isArray(loaded)) {
+                        games = loaded;
+                    }
+                } catch (e) {
+                    console.warn('Games parse failed');
+                }
+            } else {
                 console.warn('Games load failed');
                 const localGames = localStorage.getItem('games_backup_tool');
                 if (localGames) {
-                    games = JSON.parse(localGames);
-                    showToast('サーバーから読み込めなかったため、ローカルバックアップを復元しました', 'warning');
+                    try {
+                        const parsed = JSON.parse(localGames);
+                        if (Array.isArray(parsed)) {
+                            games = parsed;
+                            showToast('サーバーから読み込めなかったため、ローカルバックアップを復元しました', 'warning');
+                        }
+                    } catch(e) {}
                 }
             }
+            await fetchStamps();
+
+            // ローカルバックアップを保存（サーバーから正常に取得できた場合）
+            try { localStorage.setItem('games_backup_tool', JSON.stringify(games)); } catch(e) {}
 
             renderGames();
+            renderFilters();
             restoreActiveNotifications();
 
             // Auto Recovery Logic
             const localGamesStr = localStorage.getItem('games_backup_tool');
             if (localGamesStr) {
                 try {
-                    const localGames = JSON.parse(localGamesStr);
+                    const parsedBackup = JSON.parse(localGamesStr);
+                    const localGames = Array.isArray(parsedBackup) ? parsedBackup : null;
+                    if (!localGames) return;
                     let localPlayCount = 0;
                     localGames.forEach(g => localPlayCount += (g.playCount || 0));
                     let serverPlayCount = 0;
@@ -3115,7 +3233,16 @@
                             let shouldRender = false;
                             if (ts.games !== serverTimestamps.games) {
                                 const gRes = await fetch('./games.json?t=' + Date.now());
-                                if (gRes.ok) { games = await gRes.json(); shouldRender = true; }
+                                if (gRes.ok) {
+                                    try {
+                                        const loaded = await gRes.json();
+                                        if (Array.isArray(loaded)) {
+                                            games = loaded;
+                                            try { localStorage.setItem('games_backup_tool', JSON.stringify(games)); } catch(e) {}
+                                            shouldRender = true;
+                                        }
+                                    } catch(e) {}
+                                }
                             }
                             if (ts.config !== serverTimestamps.config) {
                                 const cRes = await fetch('./config.json?t=' + Date.now());
@@ -3127,7 +3254,7 @@
                         serverTimestamps = ts;
                     }
                 } catch(e) {}
-            }, 3000);
+            }, 5000);
 
             // 1分ごとに表示を更新して「何分前アクティブ」の時間を最新に保つ
             setInterval(() => {
@@ -3136,12 +3263,13 @@
 
             // Chat polling (start after games are loaded)
             fetchChat();
-            setInterval(fetchChat, 3000);
+            setInterval(fetchChat, 5000);
             fetchShare();
-            setInterval(fetchShare, 3000);
+            setInterval(fetchShare, 5000);
             document.addEventListener('visibilitychange', () => {
                 if (!document.hidden) {
                     fetchChat();
+                    fetchShare();
                 }
             });
         }
@@ -3160,6 +3288,7 @@
         function toggleRanking() {
             isRankingActive = !isRankingActive;
             renderGames();
+            renderFilters();
         }
 
         async function fetchShare() {
@@ -3182,11 +3311,12 @@
                                 setTimeout(() => notif.remove(), 300);
 
                                 // Remove from cache
-                                let activeNotifs = JSON.parse(localStorage.getItem('activeChatNotifs_tool') || '{}');
+                                let activeNotifs;
+                                try { activeNotifs = JSON.parse(localStorage.getItem('activeChatNotifs_tool') || '{}'); } catch(e) { activeNotifs = {}; }
                                 const notifId = notif.id ? notif.id.replace('notif-', '') : '';
                                 if (notifId) {
                                     delete activeNotifs[notifId];
-                                    localStorage.setItem('activeChatNotifs_tool', JSON.stringify(activeNotifs));
+                                    try { localStorage.setItem('activeChatNotifs_tool', JSON.stringify(activeNotifs)); } catch(e) {}
                                 }
                             }
                         });
@@ -3198,7 +3328,9 @@
                                 showChatNotification(msg, true);
                             });
                         } else {
-                            let dismissed = JSON.parse(localStorage.getItem('dismissedShareNotifs') || '[]');
+                            let dismissed;
+                            try { dismissed = JSON.parse(localStorage.getItem('dismissedShareNotifs') || '[]'); } catch(e) { dismissed = []; }
+                            if (!Array.isArray(dismissed)) dismissed = [];
                             newMessages.forEach(msg => {
                                 if (msg.clientId !== myClientId && !dismissed.includes(msg.id)) {
                                     showChatNotification(msg, true);
@@ -3249,7 +3381,7 @@
                                 
                                 <span>${timeStr}</span>
                             </div>
-                            <button onclick="App.deleteShareMessage(${msg.timestamp})" title="削除" style="background: none; border: none; color: #ff5252; cursor: pointer; font-size: 14px; padding: 0 4px; opacity: 0.6;">×</button>
+                            <button onclick="App.deleteShareMessage('${escapeHtml(String(msg.id))}')" title="削除" style="background: none; border: none; color: #ff5252; cursor: pointer; font-size: 14px; padding: 0 4px; opacity: 0.6;">×</button>
                         </div>
                         ${gameHtml}
                         ${(() => { let msgText = msg.message || ''; if (msgText === '') return ''; if (msgText.toLowerCase().startsWith('/a')) { return `<div class="chat-message-text aa-font">${escapeHtml(msgText.replace(/^\/a(?:\r?\n| )?/i, ''))}</div>`; } return `<div class="chat-message-text">${escapeHtml(msgText)}</div>`; })()}
@@ -3257,8 +3389,10 @@
                         
                         <div style="display: flex; gap: 4px; margin-top: 6px; flex-wrap: wrap;">
                             ${Object.keys(msg.reactions || {}).map(emoji => {
-                                const count = msg.reactions[emoji].length;
-                                const reacted = msg.reactions[emoji].includes(myClientId);
+                                const clients = msg.reactions[emoji] || [];
+                                if (!Array.isArray(clients)) return '';
+                                const count = clients.length;
+                                const reacted = clients.includes(myClientId);
                                 if (count === 0) return '';
                                 return `<button class="reaction-btn ${reacted ? 'reacted' : ''}" onclick="App.reactMessage('${emoji}', ${msg.timestamp}, true)">${App.renderStampContent(emoji)} <span>${count}</span></button>`;
                             }).join('')}
@@ -3272,23 +3406,24 @@
             container.scrollTop = container.scrollHeight;
         }
 
-        async function deleteShareMessage(timestamp) {
+        async function deleteShareMessage(id) {
             // Remove notification immediately
-            const msg = shareMessages.find(m => m.timestamp === timestamp);
+            const msg = shareMessages.find(m => String(m.id) === String(id));
             if (msg) {
                 document.querySelectorAll('.chat-notification').forEach(notif => {
                     if (notif.dataset.isShare !== 'true') return;
                     const ts = parseInt(notif.dataset.timestamp);
                     const nName = notif.dataset.name;
                     const nMsg = notif.dataset.messageText;
-                    if (ts === timestamp || (msg.name === nName && msg.message === nMsg)) {
+                    if (ts === msg.timestamp || (msg.name === nName && msg.message === nMsg)) {
                         notif.classList.add('hiding');
                         setTimeout(() => notif.remove(), 300);
-                        let activeNotifs = JSON.parse(localStorage.getItem('activeChatNotifs_tool') || '{}');
+                        let activeNotifs;
+                        try { activeNotifs = JSON.parse(localStorage.getItem('activeChatNotifs_tool') || '{}'); } catch(e) { activeNotifs = {}; }
                         const notifId = notif.id ? notif.id.replace('notif-', '') : '';
                         if (notifId) {
                             delete activeNotifs[notifId];
-                            localStorage.setItem('activeChatNotifs_tool', JSON.stringify(activeNotifs));
+                            try { localStorage.setItem('activeChatNotifs_tool', JSON.stringify(activeNotifs)); } catch(e) {}
                         }
                     }
                 });
@@ -3298,7 +3433,7 @@
                 const res = await fetch('./post_share.php', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ action: 'delete', timestamp: timestamp, clientId: myClientId })
+                    body: JSON.stringify({ action: 'delete', id: id, timestamp: msg ? msg.timestamp : 0, clientId: myClientId })
                 });
                 if (res.ok) {
                     fetchShare();
@@ -3397,23 +3532,24 @@
             }
         });
 
-        async function deleteChatMessage(timestamp) {
+        async function deleteChatMessage(id) {
             // Remove notification immediately
-            const msg = chatMessages.find(m => m.timestamp === timestamp);
+            const msg = chatMessages.find(m => String(m.id) === String(id));
             if (msg) {
                 document.querySelectorAll('.chat-notification').forEach(notif => {
                     if (notif.dataset.isShare === 'true') return;
                     const ts = parseInt(notif.dataset.timestamp);
                     const nName = notif.dataset.name;
                     const nMsg = notif.dataset.messageText;
-                    if (ts === timestamp || (msg.name === nName && msg.message === nMsg)) {
+                    if (ts === msg.timestamp || (msg.name === nName && msg.message === nMsg)) {
                         notif.classList.add('hiding');
                         setTimeout(() => notif.remove(), 300);
-                        let activeNotifs = JSON.parse(localStorage.getItem('activeChatNotifs_tool') || '{}');
+                        let activeNotifs;
+                        try { activeNotifs = JSON.parse(localStorage.getItem('activeChatNotifs_tool') || '{}'); } catch(e) { activeNotifs = {}; }
                         const notifId = notif.id ? notif.id.replace('notif-', '') : '';
                         if (notifId) {
                             delete activeNotifs[notifId];
-                            localStorage.setItem('activeChatNotifs_tool', JSON.stringify(activeNotifs));
+                            try { localStorage.setItem('activeChatNotifs_tool', JSON.stringify(activeNotifs)); } catch(e) {}
                         }
                     }
                 });
@@ -3423,7 +3559,7 @@
                 const res = await fetch('./post_chat.php', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ action: 'delete', timestamp: timestamp, clientId: myClientId })
+                    body: JSON.stringify({ action: 'delete', id: id, timestamp: msg ? msg.timestamp : 0, clientId: myClientId })
                 });
                 if (res.ok) {
                     fetchChat();
@@ -3433,6 +3569,12 @@
             } catch(e) {
                 showToast('通信エラー', 'error');
             }
+        }
+
+        // 送信失敗時のローカル最適更新のロールバック
+        function rollbackChatMessage(tempMsg) {
+            chatMessages = chatMessages.filter(m => m.id !== tempMsg.id);
+            renderChat();
         }
 
         function openShare() {
@@ -3459,6 +3601,7 @@
         function openImageModal(url) {
             const modal = document.getElementById('image-modal');
             const img = document.getElementById('image-modal-img');
+            if (!modal || !img) return;
             img.src = url;
             modal.style.display = 'flex';
             setTimeout(() => modal.style.opacity = '1', 10);
@@ -3466,10 +3609,12 @@
 
         function closeImageModal() {
             const modal = document.getElementById('image-modal');
+            const img = document.getElementById('image-modal-img');
+            if (!modal) return;
             modal.style.opacity = '0';
             setTimeout(() => {
                 modal.style.display = 'none';
-                document.getElementById('image-modal-img').src = '';
+                if (img) img.src = '';
             }, 300);
         }
         
