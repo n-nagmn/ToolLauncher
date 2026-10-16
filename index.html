@@ -3149,23 +3149,41 @@
             renderFilters();
             restoreActiveNotifications();
 
-            // Auto Recovery Logic
+            // Auto Recovery Logic（サーバーが正常にロードできた場合のみ）
+            // 合計playCountだけで上書きすると他クライアントのデータを消去する恐れがある。
+            // 安全なマージ: サーバーに無いゲームをローカルから追加 + 同一IDはplayCountの大きい方を採用。
             const localGamesStr = localStorage.getItem('games_backup_tool');
-            if (localGamesStr) {
+            const serverLoadedOk = gamesRes.status === 'fulfilled' && gamesRes.value.ok;
+            if (localGamesStr && serverLoadedOk) {
                 try {
                     const parsedBackup = JSON.parse(localGamesStr);
                     const localGames = Array.isArray(parsedBackup) ? parsedBackup : null;
-                    if (!localGames) return;
-                    let localPlayCount = 0;
-                    localGames.forEach(g => localPlayCount += (g.playCount || 0));
-                    let serverPlayCount = 0;
-                    games.forEach(g => serverPlayCount += (g.playCount || 0));
-                    if (localPlayCount > serverPlayCount) {
-                        console.log('Recovering games from local storage...', localPlayCount, '>', serverPlayCount);
-                        games = localGames;
-                        saveGamesToServer();
-                        showToast('ローカルから起動回数データを自動復元しました', 'success');
-                        renderGames();
+                    if (localGames && localGames.length > 0) {
+                        const serverIds = new Set(games.map(g => g.id));
+                        const localIds = new Set(localGames.map(g => g.id));
+                        let changed = false;
+                        for (const lg of localGames) {
+                            if (!serverIds.has(lg.id)) {
+                                games.push(lg);
+                                changed = true;
+                            }
+                        }
+                        for (let i = 0; i < games.length; i++) {
+                            const sg = games[i];
+                            if (localIds.has(sg.id)) {
+                                const lg = localGames.find(x => x.id === sg.id);
+                                if (lg && (lg.playCount || 0) > (sg.playCount || 0)) {
+                                    sg.playCount = lg.playCount;
+                                    changed = true;
+                                }
+                            }
+                        }
+                        if (changed) {
+                            console.log('Auto-merged local backup into server games.');
+                            saveGamesToServer();
+                            showToast('ローカルバックアップと統合しました', 'info');
+                            renderGames();
+                        }
                     }
                 } catch(e) {}
             }
