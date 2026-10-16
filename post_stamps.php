@@ -91,21 +91,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $stamps = array_values(array_filter($decoded, 'is_string'));
         // 上限100個・各100文字
         $stamps = array_slice($stamps, 0, 100);
-        $stamps = array_map(function($s) { return mb_substr(trim($s), 0, 100); }, $stamps);
+        $stamps = array_map(function($s) { return mb_substr(trim((string)$s), 0, 100, 'UTF-8'); }, $stamps);
         $stamps = array_filter($stamps, function($s) { return $s !== ''; });
         $stamps = array_values($stamps);
         $encoded = json_encode($stamps, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
+        if ($encoded === false) {
+            http_response_code(500);
+            echo json_encode(['status' => 'error', 'message' => 'JSONエンコードに失敗しました']);
+            exit;
+        }
 
         $lock_file = $stamps_file . '.lock';
-        $lock_fp = fopen($lock_file, 'w');
+        // 'c'モードを使う（'w'だとロック取得時にファイルが切り詰められる）
+        $lock_fp = @fopen($lock_file, 'c');
         if ($lock_fp && flock($lock_fp, LOCK_EX)) {
-            @file_put_contents($stamps_file, $encoded);
+            $write_ok = @file_put_contents($stamps_file, $encoded);
             @chmod($stamps_file, 0666);
             flock($lock_fp, LOCK_UN);
         }
         if ($lock_fp) fclose($lock_fp);
 
-        echo json_encode(['status' => 'success']);
+        if ($write_ok !== false) {
+            echo json_encode(['status' => 'success']);
+        } else {
+            http_response_code(500);
+            echo json_encode(['status' => 'error', 'message' => 'stamps.json への書き込みに失敗しました']);
+        }
     } else {
         http_response_code(400);
         echo json_encode(['status' => 'error', 'message' => 'Invalid JSON']);

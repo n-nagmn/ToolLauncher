@@ -193,12 +193,15 @@ if ($fp_lock && flock($fp_lock, LOCK_EX)) {
         $merged_play_count = max($client_play_count, $server_play_count);
 
         // URL検証: 絶対URLのみ構文チェック。相対パスやuploads/等の内部パスはそのまま許可
-        $clean_url = $is_outdated ? $server_game['url'] : trim($game['url']);
+        $clean_url = $is_outdated ? $server_game['url'] : trim((string)$game['url']);
         if (!$is_outdated) {
             $has_scheme = strpos($clean_url, '://') !== false;
             $is_http = preg_match('#^https?://#i', $clean_url);
             $has_traversal = preg_match('#(^|/)\.\.(/|$)#', $clean_url);
+            // javascript:/data:/vbscript:/file: 等の危険なスキームを明示的に拒否
+            $has_dangerous_scheme = preg_match('#^(javascript|data|vbscript|file):#i', trim((string)$game['url']));
             if (($has_scheme && !$is_http)
+                || $has_dangerous_scheme
                 || ($is_http && !filter_var($clean_url, FILTER_VALIDATE_URL))
                 || $has_traversal) {
                 // パストラバーサル不可 / http・https以外のスキーム拒否 / 絶対URLは構文チェック
@@ -208,10 +211,11 @@ if ($fp_lock && flock($fp_lock, LOCK_EX)) {
 
         $validated[] = [
             'id' => $game_id,
-            'name' => $is_outdated ? $server_game['name'] : htmlspecialchars(mb_substr(trim($game['name']), 0, 100), ENT_QUOTES, 'UTF-8'),
+            // 生の値を保持（エスケープはクライアントの描画時に行う。htmlspecialcharsすると&amp;が二重エンコードされる）
+            'name' => $is_outdated ? $server_game['name'] : mb_substr(trim((string)$game['name']), 0, 100, 'UTF-8'),
             'url' => $clean_url,
-            'image' => $is_outdated ? $server_game['image'] : (isset($game['image']) ? htmlspecialchars(trim($game['image']), ENT_QUOTES, 'UTF-8') : ''),
-            'category' => $is_outdated ? $server_game['category'] : (isset($game['category']) ? htmlspecialchars(mb_substr(trim($game['category']), 0, 50), ENT_QUOTES, 'UTF-8') : ''),
+            'image' => $is_outdated ? $server_game['image'] : (isset($game['image']) ? trim((string)$game['image']) : ''),
+            'category' => $is_outdated ? $server_game['category'] : (isset($game['category']) ? mb_substr(trim((string)$game['category']), 0, 50, 'UTF-8') : ''),
             'playersMin' => $is_outdated ? $server_game['playersMin'] : (isset($game['playersMin']) ? max(0, intval($game['playersMin'])) : 0),
             'playersMax' => $is_outdated ? $server_game['playersMax'] : (isset($game['playersMax']) ? max(0, intval($game['playersMax'])) : 0),
             'createdAt' => $is_outdated ? $server_game['createdAt'] : (isset($game['createdAt']) ? intval($game['createdAt']) : time() * 1000),
@@ -219,11 +223,11 @@ if ($fp_lock && flock($fp_lock, LOCK_EX)) {
             'lastPlayed' => $merged_last_played,
             'hasUpdate' => $is_outdated ? $server_game['hasUpdate'] : (isset($game['hasUpdate']) ? filter_var($game['hasUpdate'], FILTER_VALIDATE_BOOLEAN) : false),
             'remoteUpdatedAt' => $is_outdated ? $server_game['remoteUpdatedAt'] : (isset($game['remoteUpdatedAt']) ? intval($game['remoteUpdatedAt']) : 0),
-            'lastHash' => $is_outdated ? $server_game['lastHash'] : (isset($game['lastHash']) ? htmlspecialchars(trim($game['lastHash']), ENT_QUOTES, 'UTF-8') : ''),
+            'lastHash' => $is_outdated ? $server_game['lastHash'] : (isset($game['lastHash']) ? trim((string)$game['lastHash']) : ''),
             'isPinned' => $is_outdated ? $server_game['isPinned'] : (isset($game['isPinned']) ? filter_var($game['isPinned'], FILTER_VALIDATE_BOOLEAN) : false),
             'playCount' => $merged_play_count,
             'activeUsers' => $merged_active,
-            'creator' => $is_outdated ? ($server_game['creator'] ?? '') : (isset($game['creator']) ? htmlspecialchars(mb_substr(trim($game['creator']), 0, 10), ENT_QUOTES, 'UTF-8') : '')
+            'creator' => $is_outdated ? ($server_game['creator'] ?? '') : (isset($game['creator']) ? mb_substr(trim((string)$game['creator']), 0, 10, 'UTF-8') : '')
         ];
     }
 
@@ -240,7 +244,16 @@ if ($fp_lock && flock($fp_lock, LOCK_EX)) {
         exit;
     }
 
-    $result = @file_put_contents($file_path, $json_output);
+    // 原子的な書き込み（一時ファイル + rename）
+    $tmp_path = $file_path . '.tmp';
+    $result = @file_put_contents($tmp_path, $json_output, LOCK_EX);
+    if ($result !== false) {
+        if (!@rename($tmp_path, $file_path)) {
+            // renameが失敗した場合（例: 別パーティション）は通常の方法にフォールバック
+            $result = @file_put_contents($file_path, $json_output);
+            @unlink($tmp_path);
+        }
+    }
     if ($result !== false) {
         @chmod($file_path, 0666);
         

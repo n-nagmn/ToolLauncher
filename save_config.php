@@ -104,17 +104,19 @@ foreach ($decoded as $key => $value) {
             $validated[$key] = filter_var($value, FILTER_VALIDATE_BOOLEAN);
             break;
         case 'accentColor':
-            $color = ltrim(trim($value), '#');
+            $color = ltrim(trim((string)$value), '#');
             $validated[$key] = preg_match('/^[0-9A-Fa-f]{6}$/', $color) ? '#' . strtolower($color) : '#00e6e6'; 
             break;
         case 'bgImage':
-            $url = trim($value);
+            $url = trim((string)$value);
             $validated[$key] = (empty($url) || filter_var($url, FILTER_VALIDATE_URL)) ? $url : '';
             break;
         case 'gridSize':
         case 'borderRadius':
         case 'cardGap':
-            $validated[$key] = preg_replace('/[^0-9px]/', '', trim($value)) ?: '240px';
+            // キーごとにデフォルト値を使い分ける（全て240pxでは意図しない表示になる）
+            $default_size = $key === 'borderRadius' ? '8px' : ($key === 'cardGap' ? '20px' : '240px');
+            $validated[$key] = preg_replace('/[^0-9px]/', '', trim((string)$value)) ?: $default_size;
             break;
         case 'clockFormat':
             $validated[$key] = in_array($value, ['12h', '24h'], true) ? $value : '24h';

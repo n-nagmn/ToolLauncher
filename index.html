@@ -1384,7 +1384,7 @@
                 if (typeof s !== 'string') return '';
                 const display = s.startsWith('uploads/') || s.startsWith('http://') || s.startsWith('https://')
                     ? '🖼️' : escapeHtml(s);
-                const safeStamp = escapeHtml(s).replace(/'/g, "\\'");
+                const safeStamp = escapeInlineJs(s);
                 return `
                 <button class="picker-emoji" onclick="App.reactMessage('${safeStamp}')" style="background:none;border:none;cursor:pointer;font-size:18px;padding:4px;transition:transform 0.2s; display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px;" onmouseover="this.style.transform='scale(1.2)'" onmouseout="this.style.transform='scale(1)'">${display}</button>
             `;
@@ -1514,6 +1514,12 @@
         function escapeHtml(str) {
             if (typeof str !== 'string') return '';
             return str.replace(/[&<>"']/g, match => htmlEscapes[match]);
+        }
+
+        // インライン onclick 属性内の単一引用符リテラルとして安全に埋め込めるようエスケープする
+        function escapeInlineJs(str) {
+            if (typeof str !== 'string') return '';
+            return str.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/</g, '\\u003C');
         }
 
         function showToast(message, type = 'info', duration = 3000) {
@@ -1899,7 +1905,7 @@
                 if (msg.gameId) {
                     const game = games.find(g => g.id == msg.gameId);
                     if (game) {
-                        gameHtml = `<div class="chat-message-game" onclick="App.openChatGame(${game.id})">🎮 ${escapeHtml(game.name)}</div>`;
+                        gameHtml = `<div class="chat-message-game" onclick="App.openChatGame(${JSON.stringify(game.id)})">🎮 ${escapeHtml(game.name)}</div>`;
                     }
                 }
                 
@@ -1927,7 +1933,7 @@
                                 const count = clients.length;
                                 const reacted = clients.includes(myClientId);
                                 if (count === 0) return '';
-                                return `<button class="reaction-btn ${reacted ? 'reacted' : ''}" onclick="App.reactMessage('${emoji}', ${msg.timestamp}, false)">${App.renderStampContent(emoji)} <span>${count}</span></button>`;
+                                return `<button class="reaction-btn ${reacted ? 'reacted' : ''}" onclick="App.reactMessage('${escapeInlineJs(emoji)}', ${msg.timestamp}, false)">${App.renderStampContent(emoji)} <span>${count}</span></button>`;
                             }).join('')}
                             <button class="add-reaction-btn reaction-btn" style="width: 24px; justify-content: center;" onclick="App.toggleReactionPicker(${msg.timestamp}, false, this, event)">+</button>
                             <button class="reaction-btn" style="width: 24px; justify-content: center;" onclick="App.startReply(false, ${msg.timestamp})" title="返信">↩</button>
@@ -2233,8 +2239,8 @@
                     ${badge}
                     ${activeBadge}
                     ${creatorBadge}
-                    <button class="pin-btn" title="${game.isPinned ? '固定を解除' : '位置を固定'}" onclick="App.togglePin(${game.id}, event)">${game.isPinned ? '✖️' : '📌'}</button>
-                    <button class="edit-btn" title="編集" onclick="App.openGameModal(${game.id}, event)" aria-label="${escapeHtml(game.name)}を編集">✎</button>
+                    <button class="pin-btn" title="${game.isPinned ? '固定を解除' : '位置を固定'}" onclick="App.togglePin(${JSON.stringify(game.id)}, event)">${game.isPinned ? '✖️' : '📌'}</button>
+                    <button class="edit-btn" title="編集" onclick="App.openGameModal(${JSON.stringify(game.id)}, event)" aria-label="${escapeHtml(game.name)}を編集">✎</button>
                     <img alt="" loading="lazy">
                     <div class="title-bar" title="${escapeHtml(game.name)}">${escapeHtml(game.name)}</div>
                     ${catHtml}
@@ -2492,8 +2498,16 @@
         }
 
         document.addEventListener('keydown', e => {
-            if (els.gameModal.classList.contains('active') || els.settingsModal.classList.contains('active')) return;
+            // 画像ライトボックスが開いている場合は、Escで閉じる（ゲームカードの操作は行わない）
+            if (e.key === 'Escape') {
+                const imageModal = document.getElementById('image-modal');
+                if (imageModal && imageModal.style.display === 'flex') {
+                    closeImageModal();
+                    return;
+                }
+            }
 
+            if (els.gameModal.classList.contains('active') || els.settingsModal.classList.contains('active')) return;
 
             if (e.key === 'Escape') {
                 els.searchInput.value = '';
@@ -2643,6 +2657,7 @@
         }
 
         function deleteGame(id) {
+            if (!confirm('このツールを削除しますか？')) return;
             const game = games.find(g => g.id == id);
             if (game) {
                 games = games.filter(g => g.id !== id);
@@ -3029,7 +3044,7 @@
             const stampSettingsSection = document.getElementById('stamp-settings-section');
             
             window.addEventListener('paste', e => {
-                if (els.settingsModal && els.settingsModal.style.display !== 'none') {
+                if (els.settingsModal && els.settingsModal.classList.contains('active')) {
                     if (e.clipboardData && e.clipboardData.items) {
                         for (let i = 0; i < e.clipboardData.items.length; i++) {
                             if (e.clipboardData.items[i].type.startsWith('image/')) {
@@ -3162,10 +3177,16 @@
                         const serverIds = new Set(games.map(g => g.id));
                         const localIds = new Set(localGames.map(g => g.id));
                         let changed = false;
+                        // 削除済みツールの復活を防ぐ: ローカルにしか無いツールは、
+                        // 直近24時間以内に更新されたもののみ再追加する（古いエントリは破棄）
+                        const mergeCutoffMs = Date.now() - 24 * 60 * 60 * 1000;
                         for (const lg of localGames) {
                             if (!serverIds.has(lg.id)) {
-                                games.push(lg);
-                                changed = true;
+                                const lu = lg.updatedAt ? Number(lg.updatedAt) : 0;
+                                if (lu >= mergeCutoffMs) {
+                                    games.push(lg);
+                                    changed = true;
+                                }
                             }
                         }
                         for (let i = 0; i < games.length; i++) {
@@ -3385,7 +3406,7 @@
                 if (msg.gameId) {
                     const game = games.find(g => g.id == msg.gameId);
                     if (game) {
-                        gameHtml = `<div class="chat-message-game" onclick="App.openChatGame(${game.id})">🎮 ${escapeHtml(game.name)}</div>`;
+                        gameHtml = `<div class="chat-message-game" onclick="App.openChatGame(${JSON.stringify(game.id)})">🎮 ${escapeHtml(game.name)}</div>`;
                     }
                 }
                 
@@ -3413,7 +3434,7 @@
                                 const count = clients.length;
                                 const reacted = clients.includes(myClientId);
                                 if (count === 0) return '';
-                                return `<button class="reaction-btn ${reacted ? 'reacted' : ''}" onclick="App.reactMessage('${emoji}', ${msg.timestamp}, true)">${App.renderStampContent(emoji)} <span>${count}</span></button>`;
+                                return `<button class="reaction-btn ${reacted ? 'reacted' : ''}" onclick="App.reactMessage('${escapeInlineJs(emoji)}', ${msg.timestamp}, true)">${App.renderStampContent(emoji)} <span>${count}</span></button>`;
                             }).join('')}
                             <button class="add-reaction-btn reaction-btn" style="width: 24px; justify-content: center;" onclick="App.toggleReactionPicker(${msg.timestamp}, true, this, event)">+</button>
                             <button class="reaction-btn" style="width: 24px; justify-content: center;" onclick="App.startReply(true, ${msg.timestamp})" title="返信">↩</button>
@@ -3622,19 +3643,16 @@
             const img = document.getElementById('image-modal-img');
             if (!modal || !img) return;
             img.src = url;
+            // opacityトランジションが無いため、displayのみで表示/非表示する（閉じきりの不具合回避）
             modal.style.display = 'flex';
-            setTimeout(() => modal.style.opacity = '1', 10);
         }
 
         function closeImageModal() {
             const modal = document.getElementById('image-modal');
             const img = document.getElementById('image-modal-img');
             if (!modal) return;
-            modal.style.opacity = '0';
-            setTimeout(() => {
-                modal.style.display = 'none';
-                if (img) img.src = '';
-            }, 300);
+            modal.style.display = 'none';
+            if (img) img.src = '';
         }
         
         function handleShareImageSelect() {
