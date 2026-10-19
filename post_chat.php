@@ -97,8 +97,16 @@ function atomicWrite($path, $content) {
 
 $action = $decoded['action'] ?? 'post';
 
+// メッセージの一意なID解決（クライアントと同一ロジック）
+// 保存済みメッセージにはidが必須（idを優先）。id欠損の旧データはtimestamp+clientIdの合成キーで代替
+function getMessageId($msg) {
+    if (isset($msg['id']) && $msg['id'] !== '') return (string)$msg['id'];
+    return 'ts_' . (isset($msg['timestamp']) ? (int)$msg['timestamp'] : 0) . '_' . (isset($msg['clientId']) ? (string)$msg['clientId'] : 'unknown');
+}
+
 if ($action === 'react') {
     $timestamp = $decoded['timestamp'] ?? 0;
+    $msgId = isset($decoded['msgId']) ? trim((string)$decoded['msgId']) : '';
     $emoji = $decoded['emoji'] ?? '';
     $clientId = $decoded['clientId'] ?? '';
     if (!$timestamp || !$emoji || !$clientId) {
@@ -110,6 +118,14 @@ if ($action === 'react') {
         http_response_code(400);
         echo json_encode(["status" => "error", "message" => "Invalid emoji"]);
         exit;
+    }
+    // msgIdの整形（idまたはtimestamp+clientIdの合成キー）
+    if ($msgId !== '') {
+        if (strpos($msgId, 'ts_') === 0 && !preg_match('/^ts_\d+_.+$/', $msgId)) {
+            $msgId = '';
+        } elseif (!preg_match('/^[a-zA-Z0-9_\-]{1,64}$/', $msgId)) {
+            $msgId = '';
+        }
     }
 
     // リアクションは短時間のロックで更新競合（lost update）を防ぐ
@@ -131,7 +147,15 @@ if ($action === 'react') {
 
     $updated = false;
     foreach ($chat as &$msg) {
-        if (isset($msg['timestamp']) && $msg['timestamp'] === $timestamp) {
+        // msgId（一意キー）が指定された場合は厳密一致のみ。
+        // 未指定（旧クライアント）の場合は従来どおりtimestamp一致で処理
+        if ($msgId !== '') {
+            $matches = (isset($msg['timestamp']) && $msg['timestamp'] === $timestamp)
+                && (isset($msg['id']) ? ($msg['id'] === $msgId) : (getMessageId($msg) === $msgId));
+        } else {
+            $matches = isset($msg['timestamp']) && $msg['timestamp'] === $timestamp;
+        }
+        if ($matches) {
             if (!isset($msg['reactions'])) {
                 $msg['reactions'] = [];
             }
@@ -181,6 +205,15 @@ if ($action === 'react') {
 if ($action === 'delete') {
     $timestamp_to_delete = isset($decoded['timestamp']) ? intval($decoded['timestamp']) : 0;
     $id_to_delete = isset($decoded['id']) ? trim((string)$decoded['id']) : '';
+    $delete_client_id = isset($decoded['clientId']) ? trim((string)$decoded['clientId']) : '';
+
+    // 削除権限チェック: 自分(clientId一致)のメッセージのみ削除可能
+    // 旧クライアントのtimestamp削除は後方互換のため許可する
+    if ($id_to_delete !== '' && $delete_client_id === '') {
+        http_response_code(403);
+        echo json_encode(["status" => "error", "message" => "削除権限がありません。自分のメッセージのみ削除できます。"]);
+        exit;
+    }
 
     // ID指定: 競合防止のロック付きで削除
     if ($id_to_delete !== '') {
@@ -200,10 +233,14 @@ if ($action === 'delete') {
         }
         if (!is_array($chat_data)) $chat_data = [];
         $found = false;
-        $chat_data = array_values(array_filter($chat_data, function($msg) use ($id_to_delete, &$found) {
+        $chat_data = array_values(array_filter($chat_data, function($msg) use ($id_to_delete, $delete_client_id, &$found) {
             if (isset($msg['id']) && $msg['id'] === $id_to_delete) {
-                $found = true;
-                return false;
+                // 自分のメッセージのみ削除可能
+                $is_own = isset($msg['clientId']) && $msg['clientId'] === $delete_client_id;
+                if ($is_own) {
+                    $found = true;
+                    return false;
+                }
             }
             return true;
         }));
@@ -222,6 +259,7 @@ if ($action === 'delete') {
         exit;
     }
 
+    // timestamp指定の削除（旧クライアント用・後方互換）
     if ($timestamp_to_delete > 0) {
         $lock_file = __DIR__ . '/chat.lock';
         $fp_lock = @fopen($lock_file, 'c');

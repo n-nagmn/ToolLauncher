@@ -1483,6 +1483,88 @@
         let isRankingActive = false;
         let serverTimestamps = null;
         let isSaving = false;
+
+        // === クロスタブ保存ロック ===
+        // isSavingはタブ単体のフラグのため、複数タブ同時アクセス時の競合（lost update・二重保存）を
+        // localStorage上のタイムスタンプロックで協調制御する
+        const saveLockToken = 'client_' + Math.random().toString(36).substr(2, 9) + '_' + Date.now();
+        const SAVE_LOCK_STALE_MS = 120000; // 2分以上古いロックはクラッシュ等による残留とみなして上書きしてよい
+
+        function isSaveLockStale(lockObj) {
+            if (!lockObj || !lockObj.owner || !lockObj.ts) return true;
+            return (Date.now() - lockObj.ts) > SAVE_LOCK_STALE_MS;
+        }
+
+        function tryAcquireSaveLock() {
+            try {
+                const raw = localStorage.getItem('tool_save_lock');
+                const lock = raw ? JSON.parse(raw) : null;
+                if (lock && (lock.owner === saveLockToken || isSaveLockStale(lock))) {
+                    localStorage.setItem('tool_save_lock', JSON.stringify({ owner: saveLockToken, ts: Date.now() }));
+                    return true;
+                }
+                return false;
+            } catch (e) {
+                return true; // ストレージ利用不能時はブロックしない
+            }
+        }
+
+        function renewSaveLock() {
+            try {
+                const raw = localStorage.getItem('tool_save_lock');
+                const lock = raw ? JSON.parse(raw) : null;
+                if (lock && lock.owner === saveLockToken) {
+                    localStorage.setItem('tool_save_lock', JSON.stringify({ owner: saveLockToken, ts: Date.now() }));
+                }
+            } catch (e) {}
+        }
+
+        function releaseSaveLock() {
+            try {
+                const raw = localStorage.getItem('tool_save_lock');
+                const lock = raw ? JSON.parse(raw) : null;
+                if (lock && lock.owner === saveLockToken) {
+                    localStorage.removeItem('tool_save_lock');
+                }
+            } catch (e) {}
+        }
+
+        // BroadcastChannel（利用可能なら）で他タブにも即時反映
+        let saveLockChannel = null;
+        try {
+            saveLockChannel = new BroadcastChannel('tool_save_lock');
+            saveLockChannel.onmessage = (e) => {
+                if (e.data === 'released' && !isSaving) {
+                    // 他タブがロックを解放した直後。取得を1回だけ試す（取得できなければstorageイベントが補完する）
+                    if (tryAcquireSaveLock()) {
+                        runPendingSave();
+                    }
+                }
+            };
+        } catch (e) {}
+
+        window.addEventListener('beforeunload', () => {
+            if (isSaving) releaseSaveLock();
+        });
+
+        // storageイベントで他タブからのロック解放を検知して、待機中の保存を開始する
+        window.addEventListener('storage', (e) => {
+            if (e.key === 'tool_save_lock' && !isSaving) {
+                if (e.newValue === null) {
+                    if (tryAcquireSaveLock()) {
+                        runPendingSave();
+                    }
+                } else {
+                    // 他タブが更新したロックを自分のロックと見なす（同じクライアントの別タブ）
+                    try {
+                        const lock = e.newValue ? JSON.parse(e.newValue) : null;
+                        if (lock && lock.owner === saveLockToken) {
+                            localStorage.setItem('tool_save_lock', e.newValue);
+                        }
+                    } catch (err) {}
+                }
+            }
+        });
         
         // Chat state
         let chatMessages = [];
@@ -1776,9 +1858,34 @@
             }
         }
 
+        // 保存待ちキュー（他タブがロック中ならここで待機し、ロック解放後に実行する）
+        let pendingGamesSave = false;
+        let pendingConfigSave = false;
+
+        async function runPendingSave() {
+            if (isSaving) return;
+            const doConfig = pendingConfigSave;
+            const doGames = pendingGamesSave;
+            pendingGamesSave = false;
+            pendingConfigSave = false;
+            if (doConfig) await saveConfigToServer();
+            if (doGames) await saveGamesToServer();
+        }
+
         async function saveGamesToServer() {
+            if (isSaving) {
+                // 他タブ（または別保存）が保存中のため、完了後に自動実行するよう待機させる
+                pendingGamesSave = true;
+                return false;
+            }
+            if (!tryAcquireSaveLock()) {
+                // 他タブがロック保持中。待機して、ロック解放のstorageイベントで実行する
+                pendingGamesSave = true;
+                return false;
+            }
             isSaving = true;
             try {
+                renewSaveLock();
                 const response = await fetch('./save_games.php', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -1791,21 +1898,33 @@
                     const tsRes = await fetch('./check_timestamp.php?t=' + Date.now());
                     if (tsRes.ok) serverTimestamps = await tsRes.json();
                 } catch(e) {}
-                isSaving = false;
                 
                 return true;
             } catch (error) {
                 console.error('Save error:', error);
                 showToast('サーバー保存に失敗: ' + error.message, 'error', 5000);
                 // ローカルバックアップは成功した最後のデータとして保持
-                isSaving = false;
                 return false;
+            } finally {
+                isSaving = false;
+                releaseSaveLock();
+                if (saveLockChannel) { try { saveLockChannel.postMessage('released'); } catch(e) {} }
+                runPendingSave();
             }
         }
 
         async function saveConfigToServer() {
+            if (isSaving) {
+                pendingConfigSave = true;
+                return false;
+            }
+            if (!tryAcquireSaveLock()) {
+                pendingConfigSave = true;
+                return false;
+            }
             isSaving = true;
             try {
+                renewSaveLock();
                 const response = await fetch('./save_config.php', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -1819,14 +1938,17 @@
                     const tsRes = await fetch('./check_timestamp.php?t=' + Date.now());
                     if (tsRes.ok) serverTimestamps = await tsRes.json();
                 } catch(e) {}
-                isSaving = false;
                 
                 return true;
             } catch (error) {
                 console.error('Config save error:', error);
                 showToast('設定の保存に失敗: ' + error.message, 'error', 5000);
-                isSaving = false;
                 return false;
+            } finally {
+                isSaving = false;
+                releaseSaveLock();
+                if (saveLockChannel) { try { saveLockChannel.postMessage('released'); } catch(e) {} }
+                runPendingSave();
             }
         }
 
@@ -1888,6 +2010,12 @@
             }
         }
 
+        // メッセージの一意なID解決（idがあればそれを優先。古いメッセージのid欠損はtimestamp+clientIdの合成キーで代替）
+        function getMessageId(msg) {
+            if (msg.id) return String(msg.id);
+            return 'ts_' + msg.timestamp + '_' + (msg.clientId || 'unknown');
+        }
+
         function renderChat() {
             const container = document.getElementById('chat-messages');
             if (!container) return;
@@ -1900,6 +2028,7 @@
             let html = '';
             chatMessages.forEach(msg => {
                 const timeStr = new Date(msg.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+                const msgKey = getMessageId(msg);
                 const name = msg.name || '名無しさん';
                 let gameHtml = '';
                 if (msg.gameId) {
@@ -1910,7 +2039,7 @@
                 }
                 
                 html += `
-                    <div class="chat-message-item" id="msg-${msg.id}">
+                    <div class="chat-message-item" id="msg-${escapeHtml(msgKey)}">
                         ${msg.replyTo ? `<div class="replied-message">
                             <strong>@${escapeHtml(msg.replyTo.name)}</strong>&nbsp; ${escapeHtml(msg.replyTo.message)}
                         </div>` : ''}
@@ -1920,7 +2049,7 @@
                                 
                                 <span>${timeStr}</span>
                             </div>
-                            <button onclick="App.deleteChatMessage('${escapeHtml(String(msg.id))}')" title="削除" style="background: none; border: none; color: #ff5252; cursor: pointer; font-size: 14px; padding: 0 4px; opacity: 0.6;">×</button>
+                            <button onclick="App.deleteChatMessage('${escapeInlineJs(msgKey)}')" title="削除" style="background: none; border: none; color: #ff5252; cursor: pointer; font-size: 14px; padding: 0 4px; opacity: 0.6;">×</button>
                         </div>
                         ${gameHtml}
                         ${(() => { let msgText = msg.message || ''; if (msgText === '') return ''; if (msgText.toLowerCase().startsWith('/a')) { return `<div class="chat-message-text aa-font">${escapeHtml(msgText.replace(/^\/a(?:\r?\n| )?/i, ''))}</div>`; } return `<div class="chat-message-text">${escapeHtml(msgText)}</div>`; })()}
@@ -1933,10 +2062,10 @@
                                 const count = clients.length;
                                 const reacted = clients.includes(myClientId);
                                 if (count === 0) return '';
-                                return `<button class="reaction-btn ${reacted ? 'reacted' : ''}" onclick="App.reactMessage('${escapeInlineJs(emoji)}', ${msg.timestamp}, false)">${App.renderStampContent(emoji)} <span>${count}</span></button>`;
+                                return `<button class="reaction-btn ${reacted ? 'reacted' : ''}" onclick="App.reactMessage('${escapeInlineJs(emoji)}', ${msg.timestamp}, '${escapeInlineJs(msgKey)}', false)">${App.renderStampContent(emoji)} <span>${count}</span></button>`;
                             }).join('')}
-                            <button class="add-reaction-btn reaction-btn" style="width: 24px; justify-content: center;" onclick="App.toggleReactionPicker(${msg.timestamp}, false, this, event)">+</button>
-                            <button class="reaction-btn" style="width: 24px; justify-content: center;" onclick="App.startReply(false, ${msg.timestamp})" title="返信">↩</button>
+                            <button class="add-reaction-btn reaction-btn" style="width: 24px; justify-content: center;" onclick="App.toggleReactionPicker(${msg.timestamp}, '${escapeInlineJs(msgKey)}', false, this, event)">+</button>
+                            <button class="reaction-btn" style="width: 24px; justify-content: center;" onclick="App.startReply(false, ${msg.timestamp}, '${escapeInlineJs(msgKey)}')" title="返信">↩</button>
                         </div>
                     </div>
                 `;
@@ -2332,7 +2461,13 @@
         // === 起動時に順番を入れ替える（ピン留め以外） ===
         function launchGame(game) {
             if (!game.url) return;
-            window.open(game.url, localConfig.openInNewTab ? '_blank' : '_self', 'noopener,noreferrer');
+            // window.openの'_self'はnoopenerオプションを無視する（referrer漏洩対策）ため、
+            // 同一タブで開く場合はlocation.hrefで直接遷移する
+            if (localConfig.openInNewTab) {
+                window.open(game.url, '_blank', 'noopener,noreferrer');
+            } else {
+                window.location.href = game.url;
+            }
             
             // 個人の既読時刻を記録
             setReadHistoryEntry(game.id, Date.now());
@@ -3401,6 +3536,7 @@
             let html = '';
             shareMessages.forEach(msg => {
                 const timeStr = new Date(msg.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+                const msgKey = getMessageId(msg);
                 const name = msg.name || '名無しさん';
                 let gameHtml = '';
                 if (msg.gameId) {
@@ -3411,7 +3547,7 @@
                 }
                 
                 html += `
-                    <div class="chat-message-item" id="share-msg-${msg.id}">
+                    <div class="chat-message-item" id="share-msg-${escapeHtml(msgKey)}">
                         ${msg.replyTo ? `<div class="replied-message">
                             <strong>@${escapeHtml(msg.replyTo.name)}</strong>&nbsp; ${escapeHtml(msg.replyTo.message)}
                         </div>` : ''}
@@ -3421,7 +3557,7 @@
                                 
                                 <span>${timeStr}</span>
                             </div>
-                            <button onclick="App.deleteShareMessage('${escapeHtml(String(msg.id))}')" title="削除" style="background: none; border: none; color: #ff5252; cursor: pointer; font-size: 14px; padding: 0 4px; opacity: 0.6;">×</button>
+                            <button onclick="App.deleteShareMessage('${escapeInlineJs(msgKey)}')" title="削除" style="background: none; border: none; color: #ff5252; cursor: pointer; font-size: 14px; padding: 0 4px; opacity: 0.6;">×</button>
                         </div>
                         ${gameHtml}
                         ${(() => { let msgText = msg.message || ''; if (msgText === '') return ''; if (msgText.toLowerCase().startsWith('/a')) { return `<div class="chat-message-text aa-font">${escapeHtml(msgText.replace(/^\/a(?:\r?\n| )?/i, ''))}</div>`; } return `<div class="chat-message-text">${escapeHtml(msgText)}</div>`; })()}
@@ -3434,10 +3570,10 @@
                                 const count = clients.length;
                                 const reacted = clients.includes(myClientId);
                                 if (count === 0) return '';
-                                return `<button class="reaction-btn ${reacted ? 'reacted' : ''}" onclick="App.reactMessage('${escapeInlineJs(emoji)}', ${msg.timestamp}, true)">${App.renderStampContent(emoji)} <span>${count}</span></button>`;
+                                return `<button class="reaction-btn ${reacted ? 'reacted' : ''}" onclick="App.reactMessage('${escapeInlineJs(emoji)}', ${msg.timestamp}, '${escapeInlineJs(msgKey)}', true)">${App.renderStampContent(emoji)} <span>${count}</span></button>`;
                             }).join('')}
-                            <button class="add-reaction-btn reaction-btn" style="width: 24px; justify-content: center;" onclick="App.toggleReactionPicker(${msg.timestamp}, true, this, event)">+</button>
-                            <button class="reaction-btn" style="width: 24px; justify-content: center;" onclick="App.startReply(true, ${msg.timestamp})" title="返信">↩</button>
+                            <button class="add-reaction-btn reaction-btn" style="width: 24px; justify-content: center;" onclick="App.toggleReactionPicker(${msg.timestamp}, '${escapeInlineJs(msgKey)}', true, this, event)">+</button>
+                            <button class="reaction-btn" style="width: 24px; justify-content: center;" onclick="App.startReply(true, ${msg.timestamp}, '${escapeInlineJs(msgKey)}')" title="返信">↩</button>
                         </div>
                     </div>
                 `;
@@ -3448,7 +3584,9 @@
 
         async function deleteShareMessage(id) {
             // Remove notification immediately
-            const msg = shareMessages.find(m => String(m.id) === String(id));
+            const msg = shareMessages.find(m => getMessageId(m) === String(id));
+            // 自分のメッセージのみ削除可能（他ユーザーのメッセージは削除不可）
+            if (msg && (!msg.clientId || msg.clientId !== myClientId)) return;
             if (msg) {
                 document.querySelectorAll('.chat-notification').forEach(notif => {
                     if (notif.dataset.isShare !== 'true') return;
@@ -3486,14 +3624,18 @@
         }
 
         let currentReactionMsgTs = 0;
+        let currentReactionMsgId = null;
         let currentReactionIsShare = false;
         
         let currentReplyToChat = null;
         let currentReplyToShare = null;
 
-        function startReply(isShare, timestamp) {
+        function startReply(isShare, timestamp, msgId) {
             const msgs = isShare ? shareMessages : chatMessages;
-            const msg = msgs.find(m => m.timestamp === timestamp);
+            // msgId（一意キー）があればそれを優先。無い場合はtimestampで検索（互換性）
+            const msg = msgId
+                ? msgs.find(m => getMessageId(m) === msgId)
+                : msgs.find(m => m.timestamp === timestamp);
             if (!msg) return;
             const name = msg.name;
             const messageText = msg.message || '';
@@ -3525,14 +3667,15 @@
             }
         }
 
-        function toggleReactionPicker(timestamp, isShare, btnElem, event) {
+        function toggleReactionPicker(timestamp, msgId, isShare, btnElem, event) {
             event.stopPropagation();
             const picker = document.getElementById('reaction-picker');
-            if (picker.style.display === 'flex' && currentReactionMsgTs === timestamp && currentReactionIsShare === isShare) {
+            if (picker.style.display === 'flex' && currentReactionMsgId === msgId && currentReactionIsShare === isShare) {
                 picker.style.display = 'none';
                 return;
             }
             currentReactionMsgTs = timestamp;
+            currentReactionMsgId = msgId;
             currentReactionIsShare = isShare;
             picker.style.display = 'flex';
             const rect = btnElem.getBoundingClientRect();
@@ -3540,19 +3683,24 @@
             picker.style.left = Math.min(rect.left, window.innerWidth - 180) + 'px';
         }
 
-        async function reactMessage(emoji, explicitTs = null, explicitIsShare = null) {
+        async function reactMessage(emoji, explicitTs = null, explicitMsgId = null, explicitIsShare = null) {
             const timestamp = explicitTs !== null ? explicitTs : currentReactionMsgTs;
+            const msgId = explicitMsgId !== null ? explicitMsgId : currentReactionMsgId;
             const isShare = explicitIsShare !== null ? explicitIsShare : currentReactionIsShare;
-            
+
             document.getElementById('reaction-picker').style.display = 'none';
             if (!timestamp) return;
 
             try {
                 const endpoint = isShare ? './post_share.php' : './post_chat.php';
+                const payload = { action: 'react', timestamp: timestamp, emoji: emoji, clientId: myClientId };
+                // 一意なmsgId（idまたはtimestamp+clientIdの合成キー）があれば併送して
+                // 同一秒の複数メッセージ間での誤反応を防ぐ
+                if (msgId) payload.msgId = msgId;
                 const res = await fetch(endpoint, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ action: 'react', timestamp: timestamp, emoji: emoji, clientId: myClientId })
+                    body: JSON.stringify(payload)
                 });
                 if (res.ok) {
                     if (isShare) fetchShare(); else fetchChat();
@@ -3574,7 +3722,9 @@
 
         async function deleteChatMessage(id) {
             // Remove notification immediately
-            const msg = chatMessages.find(m => String(m.id) === String(id));
+            const msg = chatMessages.find(m => getMessageId(m) === String(id));
+            // 自分のメッセージのみ削除可能（他ユーザーのメッセージは削除不可）
+            if (msg && (!msg.clientId || msg.clientId !== myClientId)) return;
             if (msg) {
                 document.querySelectorAll('.chat-notification').forEach(notif => {
                     if (notif.dataset.isShare === 'true') return;
@@ -3831,7 +3981,7 @@
     </script>
 
     <!-- Image Lightbox Modal -->
-    <div class="modal" id="image-modal" role="dialog" aria-modal="true" aria-label="画像拡大" onclick="App.closeImageModal()">
+    <div class="modal" id="image-modal" style="z-index: 2000;" role="dialog" aria-modal="true" aria-label="画像拡大" onclick="App.closeImageModal()">
         <img id="image-modal-img" src="" style="max-width: 90%; max-height: 90%; object-fit: contain; border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.5); cursor: zoom-out;">
     </div>
 

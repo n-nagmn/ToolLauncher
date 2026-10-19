@@ -29,6 +29,86 @@ function backup_upload_files($dir) {
     return $files;
 }
 
+// レートリミット（post_chat.php / post_share.php と同じパターン: 30 req / 60 sec → 429）
+function checkRateLimit($file, $ip, $window, $max) {
+    $data = [];
+    if (file_exists($file)) {
+        $raw = file_get_contents($file);
+        $data = json_decode($raw, true) ?: [];
+    }
+    $now = time();
+    $key = md5($ip);
+    if (isset($data[$key])) {
+        $data[$key] = array_filter($data[$key], function($t) use ($now, $window) {
+            return ($now - $t) < $window;
+        });
+        if (count($data[$key]) >= $max) return false;
+    }
+    $data[$key][] = $now;
+    file_put_contents($file, json_encode($data), LOCK_EX);
+    return true;
+}
+
+// ゲームJSONバックアップの検証（restore: games.jsonへ書き戻す前に各エントリを検証する）
+// save_games.php と同じルール: 配列であること / id・name・url必須 / URLスキームの拒否
+// 検証に通れば正規化された配列を返す。失敗時はnull
+function validate_games_backup($restored) {
+    if (!is_array($restored)) return null;
+    $required_fields = ['id', 'name', 'url'];
+    $validated = [];
+    foreach ($restored as $index => $game) {
+        if (!is_array($game)) return null;
+        foreach ($required_fields as $field) {
+            if (!isset($game[$field]) || (is_string($game[$field]) && trim($game[$field]) === '')) {
+                return null;
+            }
+        }
+        $game_id = $game['id'];
+        if (is_numeric($game_id)) {
+            $game_id = (string)intval($game_id);
+        } else {
+            $game_id = trim((string)$game_id);
+        }
+        if ($game_id === '') return null;
+
+        // URL検証: save_games.php と同じスキーム拒否
+        // 絶対URLのみ構文チェック。相対パスやuploads/等の内部パスはそのまま許可
+        $clean_url = trim((string)$game['url']);
+        $has_scheme = strpos($clean_url, '://') !== false;
+        $is_http = preg_match('#^https?://#i', $clean_url);
+        $has_traversal = preg_match('#(^|/)\.\.(/|$)#', $clean_url);
+        // javascript:/data:/vbscript:/file: 等の危険なスキームを明示的に拒否
+        $has_dangerous_scheme = preg_match('#^(javascript|data|vbscript|file):#i', trim((string)$game['url']));
+        if (($has_scheme && !$is_http)
+            || $has_dangerous_scheme
+            || ($is_http && !filter_var($clean_url, FILTER_VALIDATE_URL))
+            || $has_traversal) {
+            $clean_url = '';
+        }
+
+        $validated[] = [
+            'id' => $game_id,
+            'name' => mb_substr(trim((string)$game['name']), 0, 100, 'UTF-8'),
+            'url' => $clean_url,
+            'image' => isset($game['image']) ? trim((string)$game['image']) : '',
+            'category' => isset($game['category']) ? mb_substr(trim((string)$game['category']), 0, 50, 'UTF-8') : '',
+            'playersMin' => isset($game['playersMin']) ? max(0, intval($game['playersMin'])) : 0,
+            'playersMax' => isset($game['playersMax']) ? max(0, intval($game['playersMax'])) : 0,
+            'createdAt' => isset($game['createdAt']) ? intval($game['createdAt']) : (time() * 1000),
+            'updatedAt' => isset($game['updatedAt']) ? intval($game['updatedAt']) : (time() * 1000),
+            'lastPlayed' => isset($game['lastPlayed']) ? intval($game['lastPlayed']) : 0,
+            'hasUpdate' => isset($game['hasUpdate']) ? filter_var($game['hasUpdate'], FILTER_VALIDATE_BOOLEAN) : false,
+            'remoteUpdatedAt' => isset($game['remoteUpdatedAt']) ? intval($game['remoteUpdatedAt']) : 0,
+            'lastHash' => isset($game['lastHash']) ? trim((string)$game['lastHash']) : '',
+            'isPinned' => isset($game['isPinned']) ? filter_var($game['isPinned'], FILTER_VALIDATE_BOOLEAN) : false,
+            'playCount' => isset($game['playCount']) ? max(0, intval($game['playCount'])) : 0,
+            'activeUsers' => isset($game['activeUsers']) && is_array($game['activeUsers']) ? $game['activeUsers'] : [],
+            'creator' => isset($game['creator']) ? mb_substr(trim((string)$game['creator']), 0, 10, 'UTF-8') : ''
+        ];
+    }
+    return $validated;
+}
+
 // ZIPバックアップを作成する。成功したらパス、失敗したらfalse
 function create_backup_zip($backup_name, $dir) {
     $files = array_merge(backup_data_files($dir), backup_upload_files($dir));
@@ -188,6 +268,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     header('Content-Type: application/json; charset=utf-8');
     $response = ["status" => "error", "message" => ""];
 
+    // Rate limiting (30 req / 60 sec → 429)
+    $rate_limit_file = __DIR__ . '/.rate_limit_backups';
+    $rate_limit_window = 60;
+    $rate_limit_max = 30;
+    $client_ip = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
+    if (!checkRateLimit($rate_limit_file, $client_ip, $rate_limit_window, $rate_limit_max)) {
+        http_response_code(429);
+        $response["message"] = "リクエストが多すぎます。しばらく経ってからお試しください。";
+        echo json_encode($response, JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+
     if ($action === 'create') {
         $backup_name = $backup_dir . '/backup_' . date('Ymd_His') . '_' . uniqid() . '.zip';
         if (create_backup_zip($backup_name, __DIR__)) {
@@ -238,7 +330,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 echo json_encode($response, JSON_UNESCAPED_UNICODE);
                 exit;
             }
-            $restored_json = json_encode($restored, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
+            // 検証してからgames.jsonへ書き戻す（各エントリにid/name/url必須・URLスキーム検証）
+            $validated = validate_games_backup($restored);
+            if ($validated === null) {
+                $response["message"] = "復元できません。バックアップに不正なデータが含まれています。";
+                echo json_encode($response, JSON_UNESCAPED_UNICODE);
+                exit;
+            }
+            $restored_json = json_encode($validated, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
             if ($restored_json === false || @file_put_contents($games_file, $restored_json) === false) {
                 $response["message"] = "復元に失敗しました";
                 echo json_encode($response, JSON_UNESCAPED_UNICODE);
@@ -291,7 +390,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 echo json_encode($response, JSON_UNESCAPED_UNICODE);
                 exit;
             }
-            $restored_json = json_encode($restored, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
+            // 検証してからgames.jsonへ書き戻す（各エントリにid/name/url必須・URLスキーム検証）
+            $validated = validate_games_backup($restored);
+            if ($validated === null) {
+                $response["message"] = "復元できません。バックアップに不正なデータが含まれています。";
+                echo json_encode($response, JSON_UNESCAPED_UNICODE);
+                exit;
+            }
+            $restored_json = json_encode($validated, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
             if ($restored_json === false || @file_put_contents($games_file, $restored_json) === false) {
                 $response["message"] = "復元に失敗しました。パーミッションを確認してください。";
                 echo json_encode($response, JSON_UNESCAPED_UNICODE);
