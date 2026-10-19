@@ -45,7 +45,8 @@ if (isset($_GET['action']) && $_GET['action'] === 'upload_image') {
                 IMAGETYPE_WEBP => 'webp',
             ];
             $ext = $ext_map[$check[2]] ?? null;
-            if (!$ext) {
+            // 拡張子ホワイトリスト: 許可する画像形式のみ
+            if (!$ext || !preg_match('/^(png|jpe?g|webp|gif)$/', $ext)) {
                 echo json_encode(['status' => 'error', 'message' => 'PNG・JPEG・GIF・WEBPのみ対応しています']);
                 exit;
             }
@@ -104,12 +105,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $lock_file = $stamps_file . '.lock';
         // 'c'モードを使う（'w'だとロック取得時にファイルが切り詰められる）
         $lock_fp = @fopen($lock_file, 'c');
-        if ($lock_fp && flock($lock_fp, LOCK_EX)) {
-            $write_ok = @file_put_contents($stamps_file, $encoded);
-            @chmod($stamps_file, 0666);
-            flock($lock_fp, LOCK_UN);
+        $write_ok = false;
+        if (!$lock_fp || !flock($lock_fp, LOCK_EX)) {
+            if ($lock_fp) fclose($lock_fp);
+            // ロック取得失敗時は書き込みを中断（lost update防止）
+            http_response_code(503);
+            echo json_encode(['status' => 'error', 'message' => 'サーバーが混雑しています。もう一度お試しください。']);
+            exit;
         }
-        if ($lock_fp) fclose($lock_fp);
+        $write_ok = @file_put_contents($stamps_file, $encoded);
+        @chmod($stamps_file, 0666);
+        flock($lock_fp, LOCK_UN);
+        fclose($lock_fp);
 
         if ($write_ok !== false) {
             echo json_encode(['status' => 'success']);

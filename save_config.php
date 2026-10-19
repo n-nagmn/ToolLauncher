@@ -123,15 +123,21 @@ foreach ($decoded as $key => $value) {
             break;
         case 'categoryOrder':
             if (is_array($value)) {
+                // 生データとして保存（エスケープは描画時に行う）。
+                // htmlspecialcharsすると &amp; 等が二重エンコードされるため
                 $validated[$key] = array_map(function($v) {
-                    return htmlspecialchars(mb_substr(trim($v), 0, 50), ENT_QUOTES, 'UTF-8');
+                    return is_string($v) ? mb_substr(trim($v), 0, 50, 'UTF-8') : (string)$v;
                 }, $value);
             }
             break;
         default:
-            $validated[$key] = is_string($value) ? htmlspecialchars(trim($value), ENT_QUOTES, 'UTF-8') : $value;
+            $validated[$key] = is_string($value) ? trim($value) : $value;
     }
 }
+
+// 文字列でない値にtrim()が渡されるとPHP8でTypeErrorになるため、
+// 上記switchでtrimする前にis_string()ガードで保護する（accentColor/bgImage/gridSize等の
+// trim((string)$value)はキャスト済みなので問題ない）
 
 // Try backup (non-critical)
 $backup_success = false;
@@ -161,7 +167,19 @@ if ($json_output === false) {
     exit;
 }
 
-$result = @file_put_contents($file_path, $json_output, LOCK_EX);
+// 原子的な書き込み（一時ファイル + rename）で途中破損を防止
+$tmp_path = $file_path . '.' . getmypid() . '.tmp';
+$result = @file_put_contents($tmp_path, $json_output, LOCK_EX);
+if ($result !== false) {
+    if (@rename($tmp_path, $file_path)) {
+        $result = true;
+    } else {
+        // renameが失敗した場合（例: 別パーティション）は通常の方法にフォールバック
+        $result = @file_put_contents($file_path, $json_output, LOCK_EX);
+        @unlink($tmp_path);
+    }
+}
+@unlink($tmp_path);
 if ($result !== false) {
     @chmod($file_path, 0666);
     $response["status"] = "success";

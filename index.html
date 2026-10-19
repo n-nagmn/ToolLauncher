@@ -1546,6 +1546,17 @@
         window.addEventListener('beforeunload', () => {
             if (isSaving) releaseSaveLock();
         });
+        // pagehideはbeforeunloadが信頼できない環境（モバイル・BFCache等）のフォールバックとして
+        // ロック解放と待機中の保存実行を行う
+        // （pendingフラグ・runPendingSaveは後方スコープで宣言されるため、実行時に存在確認する）
+        window.addEventListener('pagehide', () => {
+            if (isSaving) releaseSaveLock();
+            try {
+                if (!isSaving && (pendingGamesSave || pendingConfigSave)) {
+                    runPendingSave();
+                }
+            } catch (e) {}
+        });
 
         // storageイベントで他タブからのロック解放を検知して、待機中の保存を開始する
         window.addEventListener('storage', (e) => {
@@ -1866,10 +1877,14 @@
             if (isSaving) return;
             const doConfig = pendingConfigSave;
             const doGames = pendingGamesSave;
-            pendingGamesSave = false;
-            pendingConfigSave = false;
-            if (doConfig) await saveConfigToServer();
-            if (doGames) await saveGamesToServer();
+            // フラグは保存成功後（finally内）にのみクリアする
+            // 失敗時はフラグを残し、後続の保存処理で再試行できるようにする
+            if (doConfig && await saveConfigToServer()) {
+                pendingConfigSave = false;
+            }
+            if (doGames && await saveGamesToServer()) {
+                pendingGamesSave = false;
+            }
         }
 
         async function saveGamesToServer() {

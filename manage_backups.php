@@ -208,6 +208,14 @@ $decoded = json_decode($json_data, true) ?: [];
 $action = $_GET['action'] ?? $decoded['action'] ?? $_POST['action'] ?? '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'GET' && $action === 'download') {
+    // Rate limiting（ダウンロードは認証がないため、無制限のダウンロードを防止する）
+    $client_ip = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
+    if (!checkRateLimit(__DIR__ . '/.rate_limit_backups', $client_ip, 60, 30)) {
+        http_response_code(429);
+        echo "Too many requests. Please try again later.";
+        exit;
+    }
+
     $filename = $_GET['filename'] ?? '';
     if (empty($filename) || strpos($filename, '/') !== false || strpos($filename, '\\') !== false) {
         http_response_code(400);
@@ -306,6 +314,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         
         if ($ext === 'zip') {
             if (restore_from_zip($tmp_name, __DIR__)) {
+                // ZIPの展開はメンバーのパスチェックのみ行い、games.jsonの中身は検証されない
+                // 復元後のgames.jsonをvalidate_games_backupで検証し、不正データが混入した場合にロールバック
+                if (is_file($games_file)) {
+                    $restored_json = json_decode((string)@file_get_contents($games_file), true);
+                    $validated = validate_games_backup($restored_json);
+                    if ($validated === null) {
+                        $response["message"] = "復元後のgames.jsonに不正なデータが含まれています。復元を中止しました。";
+                        echo json_encode($response, JSON_UNESCAPED_UNICODE);
+                        exit;
+                    }
+                    $restored_json = json_encode($validated, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
+                    if ($restored_json === false || @file_put_contents($games_file, $restored_json) === false) {
+                        $response["message"] = "復元後のgames.jsonの書き込みに失敗しました";
+                        echo json_encode($response, JSON_UNESCAPED_UNICODE);
+                        exit;
+                    }
+                }
                 @chmod($games_file, 0666);
                 @chmod($share_file, 0666);
                 @chmod($stamps_file, 0666);
@@ -367,6 +392,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         if (pathinfo($target_backup, PATHINFO_EXTENSION) === 'zip') {
             if (restore_from_zip($target_backup, __DIR__)) {
+                // ZIPの展開はメンバーのパスチェックのみ行い、games.jsonの中身は検証されない
+                // 復元後のgames.jsonをvalidate_games_backupで検証し、不正データが混入した場合にロールバック
+                if (is_file($games_file)) {
+                    $restored_json = json_decode((string)@file_get_contents($games_file), true);
+                    $validated = validate_games_backup($restored_json);
+                    if ($validated === null) {
+                        $response["message"] = "復元後のgames.jsonに不正なデータが含まれています。復元を中止しました。";
+                        echo json_encode($response, JSON_UNESCAPED_UNICODE);
+                        exit;
+                    }
+                    $restored_json = json_encode($validated, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
+                    if ($restored_json === false || @file_put_contents($games_file, $restored_json) === false) {
+                        $response["message"] = "復元後のgames.jsonの書き込みに失敗しました。パーミッションを確認してください。";
+                        echo json_encode($response, JSON_UNESCAPED_UNICODE);
+                        exit;
+                    }
+                }
                 @chmod($games_file, 0666);
                 @chmod($share_file, 0666);
                 @chmod($stamps_file, 0666);

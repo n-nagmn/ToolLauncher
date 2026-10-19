@@ -234,7 +234,8 @@ if ($action === 'delete') {
         if (!is_array($chat_data)) $chat_data = [];
         $found = false;
         $chat_data = array_values(array_filter($chat_data, function($msg) use ($id_to_delete, $delete_client_id, &$found) {
-            if (isset($msg['id']) && $msg['id'] === $id_to_delete) {
+            // id欠損の旧データはgetMessageId()の合成キー(timestamp+clientId)でマッチする
+            if ((isset($msg['id']) && $msg['id'] === $id_to_delete) || (getMessageId($msg) === $id_to_delete)) {
                 // 自分のメッセージのみ削除可能
                 $is_own = isset($msg['clientId']) && $msg['clientId'] === $delete_client_id;
                 if ($is_own) {
