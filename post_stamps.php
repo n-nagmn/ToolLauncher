@@ -1,16 +1,5 @@
 <?php
-ini_set('display_errors', 0);
-error_reporting(E_ALL);
-
-header('Access-Control-Allow-Origin: *');
-header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
-header('Access-Control-Allow-Headers: Content-Type');
 header('Content-Type: application/json; charset=utf-8');
-
-if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
-    http_response_code(200);
-    exit;
-}
 
 $stamps_file = __DIR__ . '/stamps.json';
 
@@ -23,31 +12,19 @@ if (isset($_GET['action']) && $_GET['action'] === 'upload_image') {
     }
 
     if (isset($_FILES['image']) && $_FILES['image']['error'] === UPLOAD_ERR_OK) {
-        // サイズ上限 2MB
-        if ($_FILES['image']['size'] > 2 * 1024 * 1024) {
-            echo json_encode(['status' => 'error', 'message' => '画像サイズが2MBを超えるため保存できません']);
-            exit;
-        }
-
         $uploadDir = __DIR__ . "/uploads/";
         if (!is_dir($uploadDir)) {
             @mkdir($uploadDir, 0777, true);
             @chmod($uploadDir, 0777);
         }
 
-        $check = @getimagesize($_FILES['image']['tmp_name']);
+        $check = getimagesize($_FILES['image']['tmp_name']);
         if($check !== false) {
-            // 拡張子はMIME型から決定（ファイル名の .php 等を許可しない）
-            $ext_map = [
-                IMAGETYPE_PNG  => 'png',
-                IMAGETYPE_JPEG => 'jpg',
-                IMAGETYPE_GIF  => 'gif',
-                IMAGETYPE_WEBP => 'webp',
-            ];
-            $ext = $ext_map[$check[2]] ?? null;
-            // 拡張子ホワイトリスト: 許可する画像形式のみ
-            if (!$ext || !preg_match('/^(png|jpe?g|webp|gif)$/', $ext)) {
-                echo json_encode(['status' => 'error', 'message' => 'PNG・JPEG・GIF・WEBPのみ対応しています']);
+            $ext = strtolower(pathinfo($_FILES['image']['name'], PATHINFO_EXTENSION));
+            // Extension whitelist: only image types that are actually rendered
+            // as <img> stamps are allowed (prevents .php/.phtml etc. uploads).
+            if (!preg_match('/^(png|jpe?g|webp|gif)$/', $ext)) {
+                echo json_encode(['status' => 'error', 'message' => 'Invalid file extension']);
                 exit;
             }
             $filename = uniqid('stamp_') . '.' . $ext;
@@ -62,22 +39,14 @@ if (isset($_GET['action']) && $_GET['action'] === 'upload_image') {
         echo json_encode(['status' => 'error', 'message' => 'Invalid image or save failed']);
         exit;
     }
-    
+
     echo json_encode(['status' => 'error', 'message' => 'No file uploaded']);
     exit;
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     if (file_exists($stamps_file)) {
-        $raw = file_get_contents($stamps_file);
-        $stamps = json_decode($raw, true);
-        // 配列でない・要素が文字列でない場合は空リストとして返す
-        if (!is_array($stamps)) {
-            echo json_encode([]);
-        } else {
-            $stamps = array_values(array_filter($stamps, 'is_string'));
-            echo json_encode($stamps, JSON_UNESCAPED_UNICODE);
-        }
+        echo file_get_contents($stamps_file);
     } else {
         echo json_encode([]);
     }
@@ -88,41 +57,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $json_data = file_get_contents('php://input');
     $decoded = json_decode($json_data, true);
 
-    if (is_array($decoded)) {
-        $stamps = array_values(array_filter($decoded, 'is_string'));
-        // 上限100個・各100文字
-        $stamps = array_slice($stamps, 0, 100);
-        $stamps = array_map(function($s) { return mb_substr(trim((string)$s), 0, 100, 'UTF-8'); }, $stamps);
-        $stamps = array_filter($stamps, function($s) { return $s !== ''; });
-        $stamps = array_values($stamps);
-        $encoded = json_encode($stamps, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
-        if ($encoded === false) {
-            http_response_code(500);
-            echo json_encode(['status' => 'error', 'message' => 'JSONエンコードに失敗しました']);
-            exit;
+    if ($decoded !== null && is_array($decoded)) {
+        $stamps = [];
+        foreach ($decoded as $s) {
+            if (is_string($s) && $s !== '') {
+                // Stamps are embedded in onclick attributes client-side; reject
+                // quotes, angle brackets, parens, backslashes, control chars,
+                // and overly long values. Image stamps (uploads/ or URLs) and
+                // short emoji/text are allowed.
+                if (mb_strlen($s, 'UTF-8') > 64) continue;
+                if (preg_match('/[\'"<>\\\\]/u', $s)) continue;
+                if (preg_match('/[\x00-\x1f]/', $s)) continue;
+                $stamps[] = $s;
+            }
         }
+        $encoded = json_encode(array_values($stamps), JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
 
+        // M16: 'c' mode so opening the lock file never truncates it
         $lock_file = $stamps_file . '.lock';
-        // 'c'モードを使う（'w'だとロック取得時にファイルが切り詰められる）
         $lock_fp = @fopen($lock_file, 'c');
-        $write_ok = false;
-        if (!$lock_fp || !flock($lock_fp, LOCK_EX)) {
-            if ($lock_fp) fclose($lock_fp);
-            // ロック取得失敗時は書き込みを中断（lost update防止）
-            http_response_code(503);
-            echo json_encode(['status' => 'error', 'message' => 'サーバーが混雑しています。もう一度お試しください。']);
-            exit;
-        }
-        $write_ok = @file_put_contents($stamps_file, $encoded);
-        @chmod($stamps_file, 0666);
-        flock($lock_fp, LOCK_UN);
-        fclose($lock_fp);
-
-        if ($write_ok !== false) {
+        if ($lock_fp !== false && flock($lock_fp, LOCK_EX)) {
+            @file_put_contents($stamps_file, $encoded);
+            @chmod($stamps_file, 0666);
+            flock($lock_fp, LOCK_UN);
+            fclose($lock_fp);
             echo json_encode(['status' => 'success']);
         } else {
-            http_response_code(500);
-            echo json_encode(['status' => 'error', 'message' => 'stamps.json への書き込みに失敗しました']);
+            if ($lock_fp !== false) {
+                fclose($lock_fp);
+            }
+            http_response_code(503);
+            echo json_encode(['status' => 'error', 'message' => 'サーバーが混雑しています。もう一度お試しください。']);
         }
     } else {
         http_response_code(400);

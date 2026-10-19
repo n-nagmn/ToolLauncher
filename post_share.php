@@ -1,6 +1,6 @@
 <?php
 /**
- * Tool Launcher Pro - Chat/Bulletin Board Post Endpoint
+ * Web Game Launcher Pro - Chat/Bulletin Board Post Endpoint
  */
 
 ini_set('display_errors', 0);
@@ -25,30 +25,53 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 $response = ["status" => "error", "message" => ""];
 $file_path = __DIR__ . '/share.json';
 $max_messages = 100;
+$max_body_size = 1024 * 1024; // 1MB
+$max_image_size = 5 * 1024 * 1024; // 5MB
 
 // Rate limiting
 $rate_limit_file = __DIR__ . '/.rate_limit_share';
 $rate_limit_window = 60;
-$rate_limit_max = 60;
+$rate_limit_max = 30;
 $client_ip = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
 
+// H4: read + count + append happen inside a single flock, and every call
+// prunes ALL stale keys so the file does not grow unbounded.
 function checkRateLimit($file, $ip, $window, $max) {
-    $data = [];
-    if (file_exists($file)) {
-        $raw = file_get_contents($file);
-        $data = json_decode($raw, true) ?: [];
+    $fp = @fopen($file, 'c');
+    if ($fp === false) {
+        return true;
+    }
+    if (!flock($fp, LOCK_EX)) {
+        fclose($fp);
+        return true;
+    }
+    $raw = stream_get_contents($fp);
+    $data = $raw !== false && $raw !== '' ? (json_decode($raw, true) ?: []) : [];
+    if (!is_array($data)) {
+        $data = [];
     }
     $now = time();
-    $key = md5($ip);
-    if (isset($data[$key])) {
-        $data[$key] = array_filter($data[$key], function($t) use ($now, $window) {
-            return ($now - $t) < $window;
-        });
-        if (count($data[$key]) >= $max) return false;
+    // Prune every key (all stale keys on every call)
+    foreach (array_keys($data) as $k) {
+        $data[$k] = array_values(array_filter((array)$data[$k], function($t) use ($now, $window) {
+            return is_int($t) && ($now - $t) < $window;
+        }));
+        if (empty($data[$k])) {
+            unset($data[$k]);
+        }
     }
-    $data[$key][] = $now;
-    file_put_contents($file, json_encode($data), LOCK_EX);
-    return true;
+    $key = md5($ip);
+    $allowed = isset($data[$key]) ? count($data[$key]) < $max : true;
+    if ($allowed) {
+        $data[$key][] = $now;
+        ftruncate($fp, 0);
+        rewind($fp);
+        fwrite($fp, json_encode($data));
+    }
+    fflush($fp);
+    flock($fp, LOCK_UN);
+    fclose($fp);
+    return $allowed;
 }
 
 if (!checkRateLimit($rate_limit_file, $client_ip, $rate_limit_window, $rate_limit_max)) {
@@ -58,28 +81,39 @@ if (!checkRateLimit($rate_limit_file, $client_ip, $rate_limit_window, $rate_limi
     exit;
 }
 
-// リアクション絵文字の検証（XSS/改ざん防止: 16文字以下・引用符・括弧・角括弧を含まない文字列のみ許可）
-function isValidEmoji($emoji) {
-    return is_string($emoji)
-        && $emoji !== ''
-        && mb_strlen($emoji, 'UTF-8') <= 16
-        && strpos($emoji, "'") === false
-        && strpos($emoji, '"') === false
-        && strpos($emoji, '(') === false
-        && strpos($emoji, ')') === false
-        && strpos($emoji, '<') === false
-        && strpos($emoji, '>') === false;
+// Lock file (react/delete/post all perform read-modify-write under the same lock)
+$lock_file = __DIR__ . '/share.lock';
+$fp_lock = @fopen($lock_file, 'c');
+@chmod($lock_file, 0666);
+if (!$fp_lock || !flock($fp_lock, LOCK_EX)) {
+    http_response_code(503);
+    $response["message"] = "サーバーが混雑しています。もう一度お試しください。";
+    echo json_encode($response, JSON_UNESCAPED_UNICODE);
+    if ($fp_lock) { fclose($fp_lock); }
+    exit;
 }
 
-// 原子的な書き込み（一時ファイル + rename）
-function atomicWrite($path, $content) {
+// Atomic write helper: temp file + rename
+function atomicWriteJson($path, $data) {
     $tmp = $path . '.' . getmypid() . '.tmp';
-    $result = @file_put_contents($tmp, $content, LOCK_EX);
-    if ($result !== false && @rename($tmp, $path)) {
-        return true;
+    $result = @file_put_contents($tmp, json_encode($data, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT), LOCK_EX);
+    if ($result !== false) {
+        if (!@rename($tmp, $path)) {
+            @unlink($tmp);
+            $result = false;
+        } else {
+            @chmod($path, 0666);
+        }
     }
-    @unlink($tmp);
-    return false;
+    return $result !== false;
+}
+
+// Emoji validation: reject quotes, angle brackets, parens, control chars, and overly long strings
+function isValidEmoji($emoji) {
+    if (!is_string($emoji) || $emoji === '') return false;
+    if (mb_strlen($emoji, 'UTF-8') > 16) return false;
+    if (preg_match('/[\'"<>()\\\\\x00-\x1f]/u', $emoji)) return false;
+    return true;
 }
 
 $is_multipart = isset($_SERVER['CONTENT_TYPE']) && strpos($_SERVER['CONTENT_TYPE'], 'multipart/form-data') !== false;
@@ -89,9 +123,21 @@ if ($is_multipart) {
 } else {
     $json_data = file_get_contents('php://input');
 
+    // H5: cap the request body before decoding
+    if ($json_data === false || strlen($json_data) > $max_body_size) {
+        http_response_code(400);
+        $response["message"] = "データサイズが大きすぎます（最大1MB）";
+        echo json_encode($response, JSON_UNESCAPED_UNICODE);
+        flock($fp_lock, LOCK_UN);
+        fclose($fp_lock);
+        exit;
+    }
+
     if (empty($json_data)) {
         $response["message"] = "データが空です";
         echo json_encode($response, JSON_UNESCAPED_UNICODE);
+        flock($fp_lock, LOCK_UN);
+        fclose($fp_lock);
         exit;
     }
 
@@ -103,45 +149,22 @@ if ($is_multipart) {
 
 $action = $decoded['action'] ?? 'post';
 
-// メッセージの一意なID解決（クライアントと同一ロジック）
-// 保存済みメッセージにはidが必須（idを優先）。id欠損の旧データはtimestamp+clientIdの合成キーで代替
-function getMessageId($msg) {
-    if (isset($msg['id']) && $msg['id'] !== '') return (string)$msg['id'];
-    return 'ts_' . (isset($msg['timestamp']) ? (int)$msg['timestamp'] : 0) . '_' . (isset($msg['clientId']) ? (string)$msg['clientId'] : 'unknown');
-}
-
 if ($action === 'react') {
     $timestamp = $decoded['timestamp'] ?? 0;
-    $msgId = isset($decoded['msgId']) ? trim((string)$decoded['msgId']) : '';
     $emoji = $decoded['emoji'] ?? '';
     $clientId = $decoded['clientId'] ?? '';
-    if (!$timestamp || !$emoji || !$clientId) {
+    if (!$timestamp || !is_string($emoji) || $emoji === '' || !is_string($clientId) || $clientId === '') {
         http_response_code(400);
         echo json_encode(["status" => "error", "message" => "Missing react data"]);
+        flock($fp_lock, LOCK_UN);
+        fclose($fp_lock);
         exit;
     }
-    if (!isValidEmoji($emoji)) {
+    if (!isValidEmoji($emoji) || mb_strlen($clientId, 'UTF-8') > 64) {
         http_response_code(400);
-        echo json_encode(["status" => "error", "message" => "Invalid emoji"]);
-        exit;
-    }
-    // msgIdの整形（idまたはtimestamp+clientIdの合成キー）
-    if ($msgId !== '') {
-        if (strpos($msgId, 'ts_') === 0 && !preg_match('/^ts_\d+_.+$/', $msgId)) {
-            $msgId = '';
-        } elseif (!preg_match('/^[a-zA-Z0-9_\-]{1,64}$/', $msgId)) {
-            $msgId = '';
-        }
-    }
-
-    // リアクションは短時間のロックで更新競合（lost update）を防ぐ
-    // 読み込みもロック内で行う
-    $lock_file = __DIR__ . '/share.lock';
-    $fp_lock = @fopen($lock_file, 'c');
-    if (!$fp_lock || !flock($fp_lock, LOCK_EX)) {
-        if ($fp_lock) fclose($fp_lock);
-        http_response_code(503);
-        echo json_encode(["status" => "error", "message" => "サーバーが混雑しています。もう一度お試しください。"]);
+        echo json_encode(["status" => "error", "message" => "Invalid react data"]);
+        flock($fp_lock, LOCK_UN);
+        fclose($fp_lock);
         exit;
     }
 
@@ -149,27 +172,17 @@ if ($action === 'react') {
     if (file_exists($file_path)) {
         $chat = json_decode(file_get_contents($file_path), true) ?: [];
     }
-    if (!is_array($chat)) $chat = [];
 
     $updated = false;
     foreach ($chat as &$msg) {
-        // msgId（一意キー）が指定された場合は厳密一致のみ。
-        // 未指定（旧クライアント）の場合は従来どおりtimestamp一致で処理
-        if ($msgId !== '') {
-            $matches = (isset($msg['timestamp']) && $msg['timestamp'] === $timestamp)
-                && (isset($msg['id']) ? ($msg['id'] === $msgId) : (getMessageId($msg) === $msgId));
-        } else {
-            $matches = isset($msg['timestamp']) && $msg['timestamp'] === $timestamp;
-        }
-        if ($matches) {
+        if (isset($msg['timestamp']) && $msg['timestamp'] === $timestamp) {
             if (!isset($msg['reactions'])) {
                 $msg['reactions'] = [];
             }
             if (!isset($msg['reactions'][$emoji])) {
                 $msg['reactions'][$emoji] = [];
             }
-            
-            if (!is_array($msg['reactions'][$emoji])) $msg['reactions'][$emoji] = [];
+
             $idx = array_search($clientId, $msg['reactions'][$emoji]);
             if ($idx !== false) {
                 // Remove reaction
@@ -185,118 +198,78 @@ if ($action === 'react') {
             break;
         }
     }
-    
+    unset($msg);
+
     if ($updated) {
-        $written = atomicWrite($file_path, json_encode($chat, JSON_UNESCAPED_UNICODE));
-        @chmod($file_path, 0666);
-        flock($fp_lock, LOCK_UN);
-        fclose($fp_lock);
-
-        if ($written) {
-            echo json_encode(["status" => "success"]);
-        } else {
+        if (!atomicWriteJson($file_path, $chat)) {
+            $response["message"] = "share.json への書き込みに失敗しました。";
             http_response_code(500);
-            echo json_encode(["status" => "error", "message" => "share.json への書き込みに失敗しました。"]);
+            echo json_encode($response, JSON_UNESCAPED_UNICODE);
+        } else {
+            echo json_encode(["status" => "success"]);
         }
-        exit;
+    } else {
+        http_response_code(404);
+        echo json_encode(["status" => "error", "message" => "Message not found"]);
     }
-
     flock($fp_lock, LOCK_UN);
     fclose($fp_lock);
-    http_response_code(404);
-    echo json_encode(["status" => "error", "message" => "Message not found"]);
     exit;
 }
 
 if ($action === 'delete') {
-    $timestamp_to_delete = isset($decoded['timestamp']) ? intval($decoded['timestamp']) : 0;
+    // H1: ownership check. Only the author of a message may delete it.
+    // The unauthenticated timestamp-delete branch has been removed.
+    $clientId = isset($decoded['clientId']) ? trim((string)$decoded['clientId']) : '';
     $id_to_delete = isset($decoded['id']) ? trim((string)$decoded['id']) : '';
-    $delete_client_id = isset($decoded['clientId']) ? trim((string)$decoded['clientId']) : '';
 
-    // 削除権限チェック: 自分(clientId一致)のメッセージのみ削除可能
-    // 旧クライアントのtimestamp削除は後方互換のため許可する
-    if ($id_to_delete !== '' && $delete_client_id === '') {
+    if ($clientId === '' || $id_to_delete === '') {
         http_response_code(403);
         echo json_encode(["status" => "error", "message" => "削除権限がありません。自分のメッセージのみ削除できます。"]);
+        flock($fp_lock, LOCK_UN);
+        fclose($fp_lock);
         exit;
     }
 
-    // ID指定: 競合防止のロック付きで削除
-    if ($id_to_delete !== '') {
-        $lock_file = __DIR__ . '/share.lock';
-        $fp_lock = @fopen($lock_file, 'c');
-        if (!$fp_lock || !flock($fp_lock, LOCK_EX)) {
-            if ($fp_lock) fclose($fp_lock);
-            http_response_code(503);
-            echo json_encode(["status" => "error", "message" => "サーバーが混雑しています。もう一度お試しください。"]);
-            exit;
-        }
-
+    $chat_data = [];
+    if (file_exists($file_path)) {
+        $raw = file_get_contents($file_path);
+        $chat_data = json_decode($raw, true) ?: [];
+    }
+    if (!is_array($chat_data)) {
         $chat_data = [];
-        if (file_exists($file_path)) {
-            $raw = file_get_contents($file_path);
-            $chat_data = json_decode($raw, true) ?: [];
-        }
-        if (!is_array($chat_data)) $chat_data = [];
-        $found = false;
-        $chat_data = array_values(array_filter($chat_data, function($msg) use ($id_to_delete, $delete_client_id, &$found) {
-            // id欠損の旧データはgetMessageId()の合成キー(timestamp+clientId)でマッチする
-            if ((isset($msg['id']) && $msg['id'] === $id_to_delete) || (getMessageId($msg) === $id_to_delete)) {
-                // 自分のメッセージのみ削除可能
-                $is_own = isset($msg['clientId']) && $msg['clientId'] === $delete_client_id;
-                if ($is_own) {
-                    $found = true;
-                    return false;
-                }
+    }
+
+    $found = false;
+    $chat_data = array_values(array_filter($chat_data, function($msg) use ($id_to_delete, $clientId, &$found) {
+        if (isset($msg['id']) && $msg['id'] === $id_to_delete) {
+            // Only the owner may delete their own message
+            if (isset($msg['clientId']) && $msg['clientId'] === $clientId) {
+                $found = true;
+                return false;
             }
-            return true;
-        }));
+            return true; // not the owner: keep
+        }
+        return true;
+    }));
 
-        atomicWrite($file_path, json_encode($chat_data, JSON_UNESCAPED_UNICODE));
-        @chmod($file_path, 0666);
+    if (!$found) {
+        http_response_code(404);
+        echo json_encode(["status" => "error", "message" => "Message not found"]);
         flock($fp_lock, LOCK_UN);
         fclose($fp_lock);
-
-        if ($found) {
-            echo json_encode(["status" => "success"]);
-        } else {
-            http_response_code(404);
-            echo json_encode(["status" => "error", "message" => "Message not found"]);
-        }
         exit;
     }
 
-    // timestamp指定の削除（旧クライアント用・後方互換）
-    if ($timestamp_to_delete > 0) {
-        $lock_file = __DIR__ . '/share.lock';
-        $fp_lock = @fopen($lock_file, 'c');
-        if (!$fp_lock || !flock($fp_lock, LOCK_EX)) {
-            if ($fp_lock) fclose($fp_lock);
-            http_response_code(503);
-            echo json_encode(["status" => "error", "message" => "サーバーが混雑しています。もう一度お試しください。"]);
-            exit;
-        }
-
-        $chat_data = [];
-        if (file_exists($file_path)) {
-            $raw = file_get_contents($file_path);
-            $chat_data = json_decode($raw, true) ?: [];
-        }
-        // Filter out the message
-        $chat_data = array_values(array_filter($chat_data, function($msg) use ($timestamp_to_delete) {
-            return (!isset($msg['timestamp']) || $msg['timestamp'] !== $timestamp_to_delete);
-        }));
-
-        atomicWrite($file_path, json_encode($chat_data, JSON_UNESCAPED_UNICODE));
-        @chmod($file_path, 0666);
-        flock($fp_lock, LOCK_UN);
-        fclose($fp_lock);
-
-        echo json_encode(["status" => "success"]);
+    if (!atomicWriteJson($file_path, $chat_data)) {
+        $response["message"] = "share.json への書き込みに失敗しました。";
+        http_response_code(500);
+        echo json_encode($response, JSON_UNESCAPED_UNICODE);
     } else {
-        http_response_code(400);
-        echo json_encode(["status" => "error", "message" => "Invalid timestamp"]);
+        echo json_encode(["status" => "success"]);
     }
+    flock($fp_lock, LOCK_UN);
+    fclose($fp_lock);
     exit;
 }
 
@@ -307,11 +280,13 @@ $gameId = !empty($decoded['gameId']) ? trim((string)$decoded['gameId']) : null;
 $timestamp = time() * 1000;
 
 if ($name === '' || $message === '') {
-    // If it's a share with an image, message can be empty? User said "画像と文字を入れれるように", let's require at least some text or an image.
+    // If it's a share with an image, message can be empty.
     if (!($is_multipart && isset($_FILES['image']) && $_FILES['image']['error'] === UPLOAD_ERR_OK)) {
         if ($message === '') {
             $response["message"] = "名前とメッセージを入力してください";
             echo json_encode($response, JSON_UNESCAPED_UNICODE);
+            flock($fp_lock, LOCK_UN);
+            fclose($fp_lock);
             exit;
         }
     }
@@ -324,6 +299,8 @@ if ($is_aa) {
     if (isset($decoded['isShare']) && $decoded['isShare'] === 'true') {
         $response["message"] = "シェア投稿ではアスキーアートは許可されていません。";
         echo json_encode($response, JSON_UNESCAPED_UNICODE);
+        flock($fp_lock, LOCK_UN);
+        fclose($fp_lock);
         exit;
     }
     $lines = explode("\n", $message);
@@ -331,12 +308,16 @@ if ($is_aa) {
         if (mb_strlen(trim($line, "\r\n"), 'UTF-8') > 1000) {
             $response["message"] = "アスキーアートの1行の最大文字数は1000文字までです。";
             echo json_encode($response, JSON_UNESCAPED_UNICODE);
+            flock($fp_lock, LOCK_UN);
+            fclose($fp_lock);
             exit;
         }
     }
 } else if (mb_strlen($message, 'UTF-8') > 300) {
     $response["message"] = "最大文字数は300文字です。";
     echo json_encode($response, JSON_UNESCAPED_UNICODE);
+    flock($fp_lock, LOCK_UN);
+    fclose($fp_lock);
     exit;
 }
 
@@ -344,10 +325,14 @@ if ($line_count >= 9 && !$is_aa) {
     if (isset($decoded['isShare']) && $decoded['isShare'] === 'true') {
         $response["message"] = "改行が多すぎます（最大8行）。アスキーアートは許可されていません。";
         echo json_encode($response, JSON_UNESCAPED_UNICODE);
+        flock($fp_lock, LOCK_UN);
+        fclose($fp_lock);
         exit;
     } else {
         $response["message"] = "複数行のAA（アスキーアート）を送信する場合は、メッセージの先頭に /a を付けてください。";
         echo json_encode($response, JSON_UNESCAPED_UNICODE);
+        flock($fp_lock, LOCK_UN);
+        fclose($fp_lock);
         exit;
     }
 }
@@ -359,28 +344,26 @@ if ($is_multipart && isset($_FILES['image']) && $_FILES['image']['error'] === UP
         @mkdir($uploadDir, 0777, true);
         @chmod($uploadDir, 0777);
     }
-    
-    // サイズ上限 4MB
-    if ($_FILES['image']['size'] > 4 * 1024 * 1024) {
-        $response["message"] = "画像サイズが4MBを超えるため保存できません";
+
+    // H5: size check (5MB max)
+    if (($_FILES['image']['size'] ?? 0) > $max_image_size) {
+        $response["message"] = "画像サイズが5MBを超えるため保存できません。";
         echo json_encode($response, JSON_UNESCAPED_UNICODE);
+        flock($fp_lock, LOCK_UN);
+        fclose($fp_lock);
         exit;
     }
 
     // Check if it's an image
     $check = @getimagesize($_FILES['image']['tmp_name']);
-    if($check !== false) {
-        // 拡張子はMIME型から決定（ファイル名の .php 等を許可しない）
-        $ext_map = [
-            IMAGETYPE_PNG  => 'png',
-            IMAGETYPE_JPEG => 'jpg',
-            IMAGETYPE_GIF  => 'gif',
-            IMAGETYPE_WEBP => 'webp',
-        ];
-        $ext = $ext_map[$check[2]] ?? null;
-        if (!$ext) {
-            $response["message"] = "PNG・JPEG・GIF・WEBPのみ対応しています";
+    if ($check !== false) {
+        // H5: extension whitelist (png|jpe?g|webp|gif)
+        $ext = strtolower(pathinfo($_FILES['image']['name'], PATHINFO_EXTENSION));
+        if (!preg_match('/^(png|jpe?g|webp|gif)$/', $ext)) {
+            $response["message"] = "PNG・JPEG・WEBP・GIFのみアップロード可能です。";
             echo json_encode($response, JSON_UNESCAPED_UNICODE);
+            flock($fp_lock, LOCK_UN);
+            fclose($fp_lock);
             exit;
         }
         $filename = uniqid('img_') . '.' . $ext;
@@ -391,31 +374,27 @@ if ($is_multipart && isset($_FILES['image']) && $_FILES['image']['error'] === UP
         } else {
             $response["message"] = "画像の保存に失敗しました。";
             echo json_encode($response, JSON_UNESCAPED_UNICODE);
+            flock($fp_lock, LOCK_UN);
+            fclose($fp_lock);
             exit;
         }
     } else {
         $response["message"] = "画像ファイルのみアップロード可能です。";
         echo json_encode($response, JSON_UNESCAPED_UNICODE);
+        flock($fp_lock, LOCK_UN);
+        fclose($fp_lock);
         exit;
     }
 }
 
-$clientId = isset($decoded['clientId']) ? mb_substr(trim((string)$decoded['clientId']), 0, 64) : null;
-$replyTo = null;
-if (isset($decoded['replyTo'])) {
-    $rt = $decoded['replyTo'];
-    if (is_string($rt)) $rt = json_decode($rt, true);
-    if (is_array($rt)) {
-        $replyTo = [
-            'timestamp' => isset($rt['timestamp']) ? intval($rt['timestamp']) : 0,
-            'name' => isset($rt['name']) ? mb_substr(trim((string)$rt['name']), 0, 30, 'UTF-8') : '',
-            'message' => isset($rt['message']) ? mb_substr(trim((string)$rt['message']), 0, 100, 'UTF-8') : ''
-        ];
-    }
+$clientId = isset($decoded['clientId']) ? trim((string)$decoded['clientId']) : null;
+if ($clientId !== null && $clientId !== '' && mb_strlen($clientId, 'UTF-8') > 64) {
+    $clientId = mb_substr($clientId, 0, 64, 'UTF-8');
 }
+$replyTo = isset($decoded['replyTo']) ? (is_string($decoded['replyTo']) ? json_decode($decoded['replyTo'], true) : $decoded['replyTo']) : null;
 
 $new_message = [
-    'id' => uniqid('msg_'),
+    'id' => uniqid('msg_', true), // L3: more collision-resistant IDs
     'name' => $name,
     'message' => $message,
     'gameId' => $gameId,
@@ -426,25 +405,15 @@ $new_message = [
 ];
 
 $existing_messages = [];
-$result = false;
 
-$lock_file = __DIR__ . '/share.lock';
-$fp_lock = @fopen($lock_file, 'c');
-@chmod($lock_file, 0666);
-// ロックを取得できない場合は503を返す（ロックなしで書き続けるとlost updateが起こる）
-if (!$fp_lock || !flock($fp_lock, LOCK_EX)) {
-    if ($fp_lock) fclose($fp_lock);
-    $response["message"] = "サーバーが混雑しています。もう一度お試しください。";
-    http_response_code(503);
-    echo json_encode($response, JSON_UNESCAPED_UNICODE);
-    exit;
-}
-
+// Read-modify-write under the lock (acquired at the top of the script)
 if (file_exists($file_path)) {
     $existing_raw = file_get_contents($file_path);
     $existing_messages = json_decode($existing_raw, true) ?: [];
 }
-if (!is_array($existing_messages)) $existing_messages = [];
+if (!is_array($existing_messages)) {
+    $existing_messages = [];
+}
 
 array_push($existing_messages, $new_message);
 
@@ -453,14 +422,12 @@ if (count($existing_messages) > $max_messages) {
     $existing_messages = array_slice($existing_messages, -$max_messages);
 }
 
-$json_output = json_encode($existing_messages, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
-$result = ($json_output !== false) && atomicWrite($file_path, $json_output);
-@chmod($file_path, 0666);
+$result = atomicWriteJson($file_path, $existing_messages);
 
 flock($fp_lock, LOCK_UN);
 fclose($fp_lock);
 
-if ($result) {
+if ($result !== false) {
     $response["status"] = "success";
     $response["message"] = "投稿しました";
     $response["data"] = $new_message;
@@ -471,4 +438,3 @@ if ($result) {
 }
 
 echo json_encode($response, JSON_UNESCAPED_UNICODE);
-

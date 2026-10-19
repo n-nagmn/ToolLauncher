@@ -1,0 +1,2679 @@
+﻿    /**
+     * ========================================
+     * Tool Launcher Pro - Core Module
+     * ========================================
+     */
+    const App = (function() {
+        'use strict';
+
+        // --- Constants & Defaults ---
+        const DEFAULT_SERVER_CONFIG = {
+            bgImage: '',
+            categoryOrder: []
+        };
+
+        const DEFAULT_LOCAL_CONFIG = {
+            gridSize: '240px',
+            clockFormat: '24h',
+            accentColor: '#00e6e6',
+            borderRadius: '8px',
+            cardGap: '20px',
+            showTitle: true,
+            openInNewTab: true,
+            enableAnimations: true,
+            isLightMode: false
+        };
+
+        const CATEGORY_LABELS = {
+            dev: '開発', network: 'ネットワーク', monitor: '監視',
+            admin: '管理', docs: 'ドキュメント',
+            data: 'データ', security: 'セキュリティ', utility: 'ユーティリティ'
+        };
+
+        // --- State ---
+        let serverConfig = { ...DEFAULT_SERVER_CONFIG };
+        let localConfig;
+        try {
+            localConfig = JSON.parse(localStorage.getItem('tool_local_config'));
+        } catch(e) {
+            localConfig = null;
+        }
+        if (!localConfig || typeof localConfig !== 'object' || Array.isArray(localConfig)) {
+            localConfig = { ...DEFAULT_LOCAL_CONFIG };
+        }
+        
+        let games = [];
+        let customStamps = [];
+        const defaultStamps = ['👍', '❤️', '😂', '😢', '🎉'];
+
+        async function fetchStamps() {
+            try {
+                const res = await fetch('post_stamps.php');
+                if (res.ok) {
+                    const data = await res.json();
+                    if (Array.isArray(data)) {
+                        customStamps = data;
+                        renderReactionPicker();
+                        renderSettingsStamps();
+                    }
+                }
+            } catch(e) { console.error(e); }
+        }
+
+        function renderReactionPicker() {
+            const picker = document.getElementById('reaction-picker');
+            if (!picker) return;
+            const allStamps = [...defaultStamps, ...customStamps];
+            picker.innerHTML = allStamps.map(s => {
+                if (typeof s !== 'string') return '';
+                const display = s.startsWith('uploads/') || s.startsWith('http://') || s.startsWith('https://')
+                    ? '🖼️' : escapeHtml(s);
+                const safeStamp = escapeInlineJs(s);
+                return `
+                <button class="picker-emoji" onclick="App.reactMessage('${safeStamp}')" style="background:none;border:none;cursor:pointer;font-size:18px;padding:4px;transition:transform 0.2s; display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px;" onmouseover="this.style.transform='scale(1.2)'" onmouseout="this.style.transform='scale(1)'">${display}</button>
+            `;
+            }).join('');
+        }
+
+        function renderSettingsStamps() {
+            const list = document.getElementById('custom-stamps-list');
+            if(!list) return;
+            list.innerHTML = customStamps.map((s, index) => `
+                <div class="stamp-chip" style="display: flex; align-items: center; gap: 4px; padding: 4px 10px; background: rgba(128,128,128,0.1); border: 1px solid rgba(128,128,128,0.2); border-radius: 20px; font-size: 16px;">
+                    <span>${App.renderStampContent(s)}</span>
+                    <button onclick="App.deleteCustomStamp(${index})" style="background: none; border: none; color: #ff5252; cursor: pointer; padding: 0 4px; display: flex; align-items: center; justify-content: center;">&times;</button>
+                </div>
+            `).join('');
+        }
+
+                function renderStampContent(s) {
+            if (typeof s !== 'string') return '';
+            if (s.startsWith('uploads/') || s.startsWith('http://') || s.startsWith('https://')) {
+                return `<img src="${escapeHtml(s)}" onerror="this.replaceWith(document.createTextNode('🖼️'))" style="max-height: 24px; max-width: 24px; vertical-align: middle; border-radius: 4px;" alt="stamp">`;
+            }
+            return escapeHtml(s);
+        }
+
+        async function uploadCustomImageStamp(file) {
+            if (!file) return;
+            const formData = new FormData();
+            formData.append('image', file);
+            try {
+                showToast('画像をアップロード中...', 'info');
+                const res = await fetch('./post_stamps.php?action=upload_image', {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await res.json();
+                if (data.status === 'success') {
+                    customStamps.push(data.url);
+                    await saveCustomStamps();
+                    showToast('画像スタンプを追加しました', 'success');
+                } else {
+                    showToast(data.message || '失敗しました', 'error');
+                }
+            } catch(e) {
+                console.error(e);
+                showToast('エラー', 'error');
+            }
+        }
+
+        function addCustomImageStamp(event) {
+            const file = event.target.files[0];
+            if (file) uploadCustomImageStamp(file);
+            setTimeout(() => { event.target.value = ''; }, 0);
+        }
+
+        async function addCustomStamp() {
+            const input = document.getElementById('new-stamp-input');
+            const val = input.value.trim();
+            if(!val) return;
+            if (val.length > 10) {
+                showToast('スタンプ名は10文字までです', 'error');
+                return;
+            }
+            if(defaultStamps.includes(val) || customStamps.includes(val)) {
+                showToast('既に存在するスタンプです', 'error');
+                return;
+            }
+            customStamps.push(val);
+            input.value = '';
+            await saveCustomStamps();
+        }
+
+        async function deleteCustomStamp(index) {
+            customStamps.splice(index, 1);
+            await saveCustomStamps();
+        }
+
+        async function saveCustomStamps() {
+            try {
+                const res = await fetch('post_stamps.php', {
+                    method: 'POST',
+                    body: JSON.stringify(customStamps)
+                });
+                if(res.ok) {
+                    renderReactionPicker();
+                    renderSettingsStamps();
+                    showToast('スタンプを保存しました');
+                }
+            } catch(e) { console.error(e); }
+        }
+        let filteredGames = [];
+        let dragStartIndex = null;
+        let categoryDragStartIndex = null;
+        let focusedCardIndex = -1;
+        let currentCategory = 'all';
+        let isRankingActive = false;
+        let serverTimestamps = null;
+        let isSaving = false;
+
+        // === クロスタブ保存ロック ===
+        // isSavingはタブ単体のフラグのため、複数タブ同時アクセス時の競合（lost update・二重保存）を
+        // localStorage上のタイムスタンプロックで協調制御する
+        const saveLockToken = 'client_' + Math.random().toString(36).substr(2, 9) + '_' + Date.now();
+        const SAVE_LOCK_STALE_MS = 120000; // 2分以上古いロックはクラッシュ等による残留とみなして上書きしてよい
+
+        function isSaveLockStale(lockObj) {
+            if (!lockObj || !lockObj.owner || !lockObj.ts) return true;
+            return (Date.now() - lockObj.ts) > SAVE_LOCK_STALE_MS;
+        }
+
+        function tryAcquireSaveLock() {
+            try {
+                const raw = localStorage.getItem('tool_save_lock');
+                const lock = raw ? JSON.parse(raw) : null;
+                if (lock && (lock.owner === saveLockToken || isSaveLockStale(lock))) {
+                    localStorage.setItem('tool_save_lock', JSON.stringify({ owner: saveLockToken, ts: Date.now() }));
+                    return true;
+                }
+                return false;
+            } catch (e) {
+                return true; // ストレージ利用不能時はブロックしない
+            }
+        }
+
+        function renewSaveLock() {
+            try {
+                const raw = localStorage.getItem('tool_save_lock');
+                const lock = raw ? JSON.parse(raw) : null;
+                if (lock && lock.owner === saveLockToken) {
+                    localStorage.setItem('tool_save_lock', JSON.stringify({ owner: saveLockToken, ts: Date.now() }));
+                }
+            } catch (e) {}
+        }
+
+        function releaseSaveLock() {
+            try {
+                const raw = localStorage.getItem('tool_save_lock');
+                const lock = raw ? JSON.parse(raw) : null;
+                if (lock && lock.owner === saveLockToken) {
+                    localStorage.removeItem('tool_save_lock');
+                }
+            } catch (e) {}
+        }
+
+        // BroadcastChannel（利用可能なら）で他タブにも即時反映
+        let saveLockChannel = null;
+        try {
+            saveLockChannel = new BroadcastChannel('tool_save_lock');
+            saveLockChannel.onmessage = (e) => {
+                if (e.data === 'released' && !isSaving) {
+                    // 他タブがロックを解放した直後。取得を1回だけ試す（取得できなければstorageイベントが補完する）
+                    if (tryAcquireSaveLock()) {
+                        runPendingSave();
+                    }
+                }
+            };
+        } catch (e) {}
+
+        window.addEventListener('beforeunload', () => {
+            if (isSaving) releaseSaveLock();
+        });
+        // pagehideはbeforeunloadが信頼できない環境（モバイル・BFCache等）のフォールバックとして
+        // ロック解放と待機中の保存実行を行う
+        // （pendingフラグ・runPendingSaveは後方スコープで宣言されるため、実行時に存在確認する）
+        window.addEventListener('pagehide', () => {
+            if (isSaving) releaseSaveLock();
+            try {
+                if (!isSaving && (pendingGamesSave || pendingConfigSave)) {
+                    runPendingSave();
+                }
+            } catch (e) {}
+        });
+
+        // storageイベントで他タブからのロック解放を検知して、待機中の保存を開始する
+        window.addEventListener('storage', (e) => {
+            if (e.key === 'tool_save_lock' && !isSaving) {
+                if (e.newValue === null) {
+                    if (tryAcquireSaveLock()) {
+                        runPendingSave();
+                    }
+                } else {
+                    // 他タブが更新したロックを自分のロックと見なす（同じクライアントの別タブ）
+                    try {
+                        const lock = e.newValue ? JSON.parse(e.newValue) : null;
+                        if (lock && lock.owner === saveLockToken) {
+                            localStorage.setItem('tool_save_lock', e.newValue);
+                        }
+                    } catch (err) {}
+                }
+            }
+        });
+        
+        // Chat state
+        let chatMessages = [];
+        let shareMessages = [];
+        let initialShareLoaded = false;
+        let chatSidebarOpen = false;
+        let initialChatLoaded = false;
+        let myClientId = localStorage.getItem('tool_client_id');
+        if (!myClientId) {
+            myClientId = 'client_' + Math.random().toString(36).substr(2, 9);
+            localStorage.setItem('tool_client_id', myClientId);
+        }
+
+        // --- DOM Elements ---
+        const els = {};
+
+        // --- Utilities ---
+
+        function getUniqueUserId() {
+            let userId = localStorage.getItem('tool_user_id');
+            if (!userId) {
+                userId = 'u_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+                localStorage.setItem('tool_user_id', userId);
+            }
+            return userId;
+        }
+
+        const htmlEscapes = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+        function escapeHtml(str) {
+            if (typeof str !== 'string') return '';
+            return str.replace(/[&<>"']/g, match => htmlEscapes[match]);
+        }
+
+        // インライン onclick 属性内の単一引用符リテラルとして安全に埋め込めるようエスケープする
+        function escapeInlineJs(str) {
+            if (typeof str !== 'string') return '';
+            return str.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/</g, '\\u003C');
+        }
+
+        function showToast(message, type = 'info', duration = 3000) {
+            const container = document.getElementById('toast-container');
+            const toast = document.createElement('div');
+            toast.className = `toast ${type}`;
+
+            const icons = { info: 'ℹ️', success: '✅', error: '❌', warning: '⚠️' };
+            toast.innerHTML = `<span class="toast-icon">${icons[type] || icons.info}</span><span>${escapeHtml(message)}</span>`;
+
+            container.appendChild(toast);
+            requestAnimationFrame(() => toast.classList.add('show'));
+
+            const tId = setTimeout(() => {
+                toast.classList.remove('show');
+                setTimeout(() => toast.remove(), 300);
+            }, duration);
+
+            toast.onclick = () => {
+                clearTimeout(tId);
+                toast.classList.remove('show');
+                setTimeout(() => toast.remove(), 300);
+            };
+        }
+
+        function showChatNotification(msg, isShare = false) {
+            const container = document.getElementById('chat-notification-container');
+            const notif = document.createElement('div');
+            notif.className = 'chat-notification';
+            
+            // Generate a unique key for caching this active notification
+            const notifId = (isShare ? 'share_' : 'chat_') + (msg.id || ('temp_' + msg.timestamp));
+
+            // Check if already exists in DOM
+            if (document.getElementById('notif-' + notifId)) return;
+
+            notif.id = 'notif-' + notifId;
+            
+            const timeStr = new Date(msg.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+            const name = msg.name || '名無しさん';
+            
+            notif.dataset.timestamp = msg.timestamp;
+            notif.dataset.name = name;
+            notif.dataset.messageText = msg.message;
+            if (isShare) notif.dataset.isShare = 'true';
+            
+            let gameHtml = '';
+            if (msg.gameId) {
+                const game = games.find(g => g.id == msg.gameId);
+                if (game) {
+                    gameHtml = `<div class="chat-notification-game">🎮 ${escapeHtml(game.name)}</div>`;
+                }
+            }
+
+            let imgHtml = '';
+            if (msg.imageUrl) {
+                imgHtml = `<div style="margin-top: 6px; margin-bottom: 4px;"><img src="${escapeHtml(msg.imageUrl)}" style="max-height: 240px; max-width: 100%; border-radius: 6px; border: 1px solid rgba(128,128,128,0.2); pointer-events: none;" alt="Image"></div>`;
+            }
+
+            notif.innerHTML = `
+                ${msg.replyTo ? `<div class="replied-message" style="margin-bottom: 4px;">
+                    <strong>@${escapeHtml(msg.replyTo.name)}</strong>&nbsp; ${escapeHtml(msg.replyTo.message)}
+                </div>` : ''}
+                <div class="chat-notification-header" style="position: relative; padding-right: 20px;">
+                    <span class="chat-notification-name">${escapeHtml(name)}</span>
+                    <span>${timeStr}</span>
+                    <button class="notif-close-btn" title="閉じる" style="position: absolute; right: -8px; top: -4px; background: none; border: none; color: inherit; font-size: 18px; cursor: pointer; padding: 4px; line-height: 1; opacity: 0.6;">&times;</button>
+                </div>
+                ${gameHtml}
+                ${(() => { let msgText = msg.message || ''; if (msgText === '') return ''; if (msgText.toLowerCase().startsWith('/a')) { return `<div class="chat-notification-text aa-font">${escapeHtml(msgText.replace(/^\/a(?:\r?\n| )?/i, ''))}</div>`; } return `<div class="chat-notification-text">${escapeHtml(msgText)}</div>`; })()}
+                ${imgHtml}
+            `;
+
+            const removeFromCache = () => {
+                let activeNotifs;
+                try { activeNotifs = JSON.parse(localStorage.getItem('activeChatNotifs_tool') || '{}'); } catch(e) { activeNotifs = {}; }
+                if (!activeNotifs || typeof activeNotifs !== 'object') activeNotifs = {};
+                delete activeNotifs[notifId];
+                try { localStorage.setItem('activeChatNotifs_tool', JSON.stringify(activeNotifs)); } catch(e) {}
+            };
+
+            const dismissMsg = (storageKey) => {
+                if (!msg.id) return;
+                let dismissed;
+                try { dismissed = JSON.parse(localStorage.getItem(storageKey) || '[]'); } catch(e) { dismissed = []; }
+                if (!Array.isArray(dismissed)) dismissed = [];
+                if (!dismissed.includes(msg.id)) {
+                    dismissed.push(msg.id);
+                    if (dismissed.length > 200) dismissed = dismissed.slice(-200);
+                    try { localStorage.setItem(storageKey, JSON.stringify(dismissed)); } catch(e) {}
+                }
+            };
+
+            const closeBtn = notif.querySelector('.notif-close-btn');
+            if (closeBtn) {
+                closeBtn.onclick = (e) => {
+                    e.stopPropagation();
+                    notif.classList.add('hiding');
+                    setTimeout(() => notif.remove(), 300);
+                    removeFromCache();
+                    dismissMsg(isShare ? 'dismissedShareNotifs' : 'dismissedChatNotifs');
+                };
+            }
+
+            notif.onclick = (e) => {
+                e.stopPropagation();
+                notif.classList.add('hiding');
+                setTimeout(() => notif.remove(), 300);
+                removeFromCache();
+                dismissMsg(isShare ? 'dismissedShareNotifs' : 'dismissedChatNotifs');
+                if (msg.gameId) {
+                    openChatGame(msg.gameId);
+                }
+            };
+
+            // Save to active notifications cache
+            let activeNotifs;
+            try { activeNotifs = JSON.parse(localStorage.getItem('activeChatNotifs_tool') || '{}'); } catch(e) { activeNotifs = {}; }
+            if (!activeNotifs || typeof activeNotifs !== 'object') activeNotifs = {};
+            // msg を保存する前に blob: URL を除去（session 限定であり、reload 後に無効になるため）
+            const safeMsg = { ...msg };
+            if (safeMsg.imageUrl && safeMsg.imageUrl.startsWith('blob:')) safeMsg.imageUrl = null;
+            activeNotifs[notifId] = { msg: safeMsg, isShare, timestamp: Date.now() };
+            // Prune very old active notifications (e.g., older than 3 days)
+            const threeDaysAgo = Date.now() - 3 * 24 * 60 * 60 * 1000;
+            for (let key in activeNotifs) {
+                if (activeNotifs[key].timestamp < threeDaysAgo) delete activeNotifs[key];
+            }
+            try {
+                localStorage.setItem('activeChatNotifs_tool', JSON.stringify(activeNotifs));
+            } catch (e) {
+                // ストレージが埋まった場合: 古いものを削除してリトライ
+                for (let key in activeNotifs) {
+                    if (key !== notifId) delete activeNotifs[key];
+                }
+                try { localStorage.setItem('activeChatNotifs_tool', JSON.stringify(activeNotifs)); } catch(e2) {}
+            }
+
+            container.prepend(notif);
+
+            // AA Auto-scaling for notification
+            const aaEl = notif.querySelector('.chat-notification-text.aa-font');
+            if (aaEl) {
+                requestAnimationFrame(() => {
+                    aaEl.style.zoom = 1;
+                    const maxW = window.innerWidth * 0.85;
+                    const maxH = window.innerHeight * 0.85;
+                    const scaleW = maxW / aaEl.scrollWidth;
+                    const scaleH = maxH / aaEl.scrollHeight;
+                    const scale = Math.min(1, scaleW, scaleH) * 0.98;
+                    if (scale < 1) {
+                        aaEl.style.zoom = scale;
+                        aaEl.style.overflow = 'hidden';
+                    }
+                });
+            }
+
+            // Ensure notification can scroll if it's too large
+            setTimeout(() => notif.classList.add('show'), 10);
+        }
+
+        function restoreActiveNotifications() {
+            let activeNotifs;
+            try {
+                activeNotifs = JSON.parse(localStorage.getItem('activeChatNotifs_tool') || '{}');
+            } catch (e) {
+                activeNotifs = {};
+            }
+            if (!activeNotifs || typeof activeNotifs !== 'object') return;
+            // Sort by timestamp to preserve order
+            const sorted = Object.values(activeNotifs).sort((a, b) => a.msg.timestamp - b.msg.timestamp);
+            sorted.forEach(item => {
+                // If it's already shown (shouldn't happen on init but just in case), skip
+                if (document.getElementById('notif-' + (item.isShare ? 'share_' : 'chat_') + item.msg.id)) return;
+                showChatNotification(item.msg, item.isShare);
+            });
+        }
+
+        function hexToRgb(hex) {
+            hex = hex.replace('#', '');
+            if (hex.length === 3) hex = hex.split('').map(c => c + c).join('');
+            const r = parseInt(hex.substring(0, 2), 16);
+            const g = parseInt(hex.substring(2, 4), 16);
+            const b = parseInt(hex.substring(4, 6), 16);
+            return `${r}, ${g}, ${b}`;
+        }
+
+        function generateHash(str) {
+            let hash = 0;
+            for (let i = 0; i < str.length; i++) {
+                hash = str.charCodeAt(i) + ((hash << 5) - hash);
+            }
+            return hash;
+        }
+
+        const _placeholderCache = {};
+        function generatePlaceholderImage(title) {
+            if (_placeholderCache[title]) return _placeholderCache[title];
+            const canvas = document.createElement('canvas');
+            canvas.width = 400; 
+            canvas.height = 225;
+            const ctx = canvas.getContext('2d');
+            const hash = generateHash(title);
+
+            const c1 = (hash & 0x00FFFFFF).toString(16).toUpperCase().padStart(6, '0');
+            const c2 = ((hash >> 1) & 0x00FFFFFF).toString(16).toUpperCase().padStart(6, '0');
+
+            const gradient = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
+            gradient.addColorStop(0, '#' + c1);
+            gradient.addColorStop(1, '#' + c2);
+            ctx.fillStyle = gradient;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            ctx.fillStyle = '#ffffff';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.font = "bold 100px 'Segoe UI', sans-serif";
+            ctx.shadowColor = 'rgba(0, 0, 0, 0.5)';
+            ctx.shadowBlur = 20;
+            ctx.shadowOffsetX = 4;
+            ctx.shadowOffsetY = 4;
+
+            const initials = title.substring(0, Math.min(title.length, 2)).toUpperCase();
+            ctx.fillText(initials, canvas.width / 2, canvas.height / 2);
+            const dataUrl = canvas.toDataURL('image/png');
+            _placeholderCache[title] = dataUrl;
+            return dataUrl;
+        }
+
+        // --- Server Communication ---
+
+        let _readHistoryCache = null;
+        function getReadHistory() {
+            if (_readHistoryCache === null) {
+                let parsed;
+                try { parsed = JSON.parse(localStorage.getItem('toolReadHistory')); } catch(e) { parsed = null; }
+                _readHistoryCache = (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : {};
+            }
+            return _readHistoryCache;
+        }
+        function setReadHistoryEntry(gameId, ts) {
+            const h = getReadHistory();
+            h[gameId] = ts;
+            try {
+                localStorage.setItem('toolReadHistory', JSON.stringify(h));
+            } catch(e) {
+                // クォータ超過時は最古のエントリを削ってリトライ
+                const keys = Object.keys(h);
+                keys.sort((a, b) => h[a] - h[b]);
+                for (let i = 0; i < Math.max(1, Math.floor(keys.length / 4)); i++) {
+                    delete h[keys[i]];
+                }
+                try { localStorage.setItem('toolReadHistory', JSON.stringify(h)); } catch(e2) {}
+            }
+        }
+
+        // 保存待ちキュー（他タブがロック中ならここで待機し、ロック解放後に実行する）
+        let pendingGamesSave = false;
+        let pendingConfigSave = false;
+
+        async function runPendingSave() {
+            if (isSaving) return;
+            const doConfig = pendingConfigSave;
+            const doGames = pendingGamesSave;
+            // フラグは保存成功後（finally内）にのみクリアする
+            // 失敗時はフラグを残し、後続の保存処理で再試行できるようにする
+            if (doConfig && await saveConfigToServer()) {
+                pendingConfigSave = false;
+            }
+            if (doGames && await saveGamesToServer()) {
+                pendingGamesSave = false;
+            }
+        }
+
+        async function saveGamesToServer() {
+            if (isSaving) {
+                // 他タブ（または別保存）が保存中のため、完了後に自動実行するよう待機させる
+                pendingGamesSave = true;
+                return false;
+            }
+            if (!tryAcquireSaveLock()) {
+                // 他タブがロック保持中。待機して、ロック解放のstorageイベントで実行する
+                pendingGamesSave = true;
+                return false;
+            }
+            isSaving = true;
+            try {
+                renewSaveLock();
+                const response = await fetch('./save_games.php', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(games)
+                });
+                const data = await response.json();
+                if (data.status !== 'success') throw new Error(data.message);
+                
+                try {
+                    const tsRes = await fetch('./check_timestamp.php?t=' + Date.now());
+                    if (tsRes.ok) serverTimestamps = await tsRes.json();
+                } catch(e) {}
+                
+                return true;
+            } catch (error) {
+                console.error('Save error:', error);
+                showToast('サーバー保存に失敗: ' + error.message, 'error', 5000);
+                // ローカルバックアップは成功した最後のデータとして保持
+                return false;
+            } finally {
+                isSaving = false;
+                releaseSaveLock();
+                if (saveLockChannel) { try { saveLockChannel.postMessage('released'); } catch(e) {} }
+                runPendingSave();
+            }
+        }
+
+        async function saveConfigToServer() {
+            if (isSaving) {
+                pendingConfigSave = true;
+                return false;
+            }
+            if (!tryAcquireSaveLock()) {
+                pendingConfigSave = true;
+                return false;
+            }
+            isSaving = true;
+            try {
+                renewSaveLock();
+                const response = await fetch('./save_config.php', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(serverConfig)
+                });
+                const data = await response.json();
+                if (data.status !== 'success') throw new Error(data.message);
+                showToast('設定を保存しました', 'success');
+                
+                try {
+                    const tsRes = await fetch('./check_timestamp.php?t=' + Date.now());
+                    if (tsRes.ok) serverTimestamps = await tsRes.json();
+                } catch(e) {}
+                
+                return true;
+            } catch (error) {
+                console.error('Config save error:', error);
+                showToast('設定の保存に失敗: ' + error.message, 'error', 5000);
+                return false;
+            } finally {
+                isSaving = false;
+                releaseSaveLock();
+                if (saveLockChannel) { try { saveLockChannel.postMessage('released'); } catch(e) {} }
+                runPendingSave();
+            }
+        }
+
+        // --- Chat Functionality ---
+
+        async function fetchChat() {
+            try {
+                const res = await fetch('./chat.json?t=' + Date.now());
+                if (res.ok) {
+                    const newMessages = await res.json();
+                    if (JSON.stringify(newMessages) !== JSON.stringify(chatMessages)) {
+                        // Remove notifications for deleted messages
+                        document.querySelectorAll('.chat-notification').forEach(notif => {
+                            if (notif.dataset.isShare === 'true') return;
+                            const ts = parseInt(notif.dataset.timestamp);
+                            const nName = notif.dataset.name;
+                            const nMsg = notif.dataset.messageText;
+                            if (ts && !newMessages.some(m => 
+                                (m.timestamp === ts) || 
+                                (m.name === nName && m.message === nMsg)
+                            )) {
+                                notif.classList.add('hiding');
+                                setTimeout(() => notif.remove(), 300);
+                                let activeNotifs;
+                                try { activeNotifs = JSON.parse(localStorage.getItem('activeChatNotifs_tool') || '{}'); } catch(e) { activeNotifs = {}; }
+                                const notifId = notif.id ? notif.id.replace('notif-', '') : '';
+                                if (notifId) {
+                                    delete activeNotifs[notifId];
+                                    try { localStorage.setItem('activeChatNotifs_tool', JSON.stringify(activeNotifs)); } catch(e) {}
+                                }
+                            }
+                        });
+
+                        // Check for new messages from others
+                        if (initialChatLoaded) {
+                            const newItems = newMessages.filter(m => !chatMessages.some(old => old.id === m.id) && m.clientId !== myClientId);
+                            newItems.forEach(msg => {
+                                showChatNotification(msg);
+                            });
+                        } else {
+                            let dismissed;
+                            try { dismissed = JSON.parse(localStorage.getItem('dismissedChatNotifs') || '[]'); } catch(e) { dismissed = []; }
+                            if (!Array.isArray(dismissed)) dismissed = [];
+                            newMessages.forEach(msg => {
+                                if (msg.clientId !== myClientId && !dismissed.includes(msg.id)) {
+                                    showChatNotification(msg);
+                                }
+                            });
+                        }
+                        chatMessages = newMessages;
+                        initialChatLoaded = true;
+                        renderChat();
+                    } else {
+                        initialChatLoaded = true;
+                    }
+                }
+            } catch (e) {
+                // Silently fail if chat not ready
+            }
+        }
+
+        // メッセージの一意なID解決（idがあればそれを優先。古いメッセージのid欠損はtimestamp+clientIdの合成キーで代替）
+        function getMessageId(msg) {
+            if (msg.id) return String(msg.id);
+            return 'ts_' + msg.timestamp + '_' + (msg.clientId || 'unknown');
+        }
+
+        function renderChat() {
+            const container = document.getElementById('chat-messages');
+            if (!container) return;
+            
+            if (chatMessages.length === 0) {
+                container.innerHTML = '<div style="text-align: center; color: #888; font-size: 13px; margin-top: 20px;">まだメッセージはありません<br>ツールについて気軽に相談してみましょう！</div>';
+                return;
+            }
+
+            let html = '';
+            chatMessages.forEach(msg => {
+                const timeStr = new Date(msg.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+                const msgKey = getMessageId(msg);
+                const name = msg.name || '名無しさん';
+                let gameHtml = '';
+                if (msg.gameId) {
+                    const game = games.find(g => g.id == msg.gameId);
+                    if (game) {
+                        gameHtml = `<div class="chat-message-game" onclick="App.openChatGame(${JSON.stringify(game.id)})">🎮 ${escapeHtml(game.name)}</div>`;
+                    }
+                }
+                
+                html += `
+                    <div class="chat-message-item" id="msg-${escapeHtml(msgKey)}">
+                        ${msg.replyTo ? `<div class="replied-message">
+                            <strong>@${escapeHtml(msg.replyTo.name)}</strong>&nbsp; ${escapeHtml(msg.replyTo.message)}
+                        </div>` : ''}
+                        <div class="chat-message-header" style="display: flex; justify-content: space-between; font-size: 11px; color: #888; margin-bottom: 3px; align-items: center;">
+                            <div>
+                                <span class="chat-message-name">${escapeHtml(name)}</span>
+                                
+                                <span>${timeStr}</span>
+                            </div>
+                            <button onclick="App.deleteChatMessage('${escapeInlineJs(msgKey)}')" title="削除" style="background: none; border: none; color: #ff5252; cursor: pointer; font-size: 14px; padding: 0 4px; opacity: 0.6;">×</button>
+                        </div>
+                        ${gameHtml}
+                        ${(() => { let msgText = msg.message || ''; if (msgText === '') return ''; if (msgText.toLowerCase().startsWith('/a')) { return `<div class="chat-message-text aa-font">${escapeHtml(msgText.replace(/^\/a(?:\r?\n| )?/i, ''))}</div>`; } return `<div class="chat-message-text">${escapeHtml(msgText)}</div>`; })()}
+                        ${msg.imageUrl ? `<div style="margin-top: 8px;"><a href="${escapeHtml(msg.imageUrl)}" target="_blank"><img src="${escapeHtml(msg.imageUrl)}" style="max-width: 50%; border-radius: 8px; border: 1px solid rgba(255,255,255,0.1);" alt="Image"></a></div>` : ''}
+                        
+                        <div style="display: flex; gap: 4px; margin-top: 6px; flex-wrap: wrap;">
+                            ${Object.keys(msg.reactions || {}).map(emoji => {
+                                const clients = msg.reactions[emoji] || [];
+                                if (!Array.isArray(clients)) return '';
+                                const count = clients.length;
+                                const reacted = clients.includes(myClientId);
+                                if (count === 0) return '';
+                                return `<button class="reaction-btn ${reacted ? 'reacted' : ''}" onclick="App.reactMessage('${escapeInlineJs(emoji)}', ${msg.timestamp}, '${escapeInlineJs(msgKey)}', false)">${App.renderStampContent(emoji)} <span>${count}</span></button>`;
+                            }).join('')}
+                            <button class="add-reaction-btn reaction-btn" style="width: 24px; justify-content: center;" onclick="App.toggleReactionPicker(${msg.timestamp}, '${escapeInlineJs(msgKey)}', false, this, event)">+</button>
+                            <button class="reaction-btn" style="width: 24px; justify-content: center;" onclick="App.startReply(false, ${msg.timestamp}, '${escapeInlineJs(msgKey)}')" title="返信">↩</button>
+                        </div>
+                    </div>
+                `;
+            });
+            container.innerHTML = html;
+            
+            // AA Auto-scaling to fit within a defined box
+            requestAnimationFrame(() => {
+                container.querySelectorAll('.chat-message-text.aa-font').forEach(el => {
+                    // Reset zoom to measure original size
+                    el.style.zoom = 1;
+                    const parentW = el.parentElement.clientWidth;
+                    const maxW = parentW - 24; // Parent width minus padding
+                    const maxH = 250; // Defined box height
+
+                    const scaleW = maxW / el.scrollWidth;
+                    const scaleH = maxH / el.scrollHeight;
+
+                    // Scale down with a 2% safety margin to prevent 1px scrollbars
+                    const scale = Math.min(1, scaleW, scaleH) * 0.98;
+                    
+                    if (scale < 1) {
+                        el.style.zoom = scale;
+                        el.style.overflow = 'hidden';
+                    }
+                });
+            });
+
+            // Scroll to bottom
+            setTimeout(() => {
+                container.scrollTop = container.scrollHeight;
+            }, 10);
+        }
+
+        function openChat() {
+            document.body.classList.add('chat-open');
+            document.getElementById('chat-sidebar').classList.add('active');
+            
+            // Populate game select
+            const select = document.getElementById('chat-game-select');
+            let options = '<option value="">ツール指定なし</option>';
+            games.forEach(g => {
+                options += `<option value="${g.id}">${escapeHtml(g.name)}</option>`;
+            });
+            select.innerHTML = options;
+            
+            // Restore name
+            let savedName = localStorage.getItem('chat_name');
+            if (savedName === '名無しさん') {
+                localStorage.removeItem('chat_name');
+                savedName = null;
+            }
+            if (savedName) {
+                document.getElementById('chat-name').value = savedName;
+            } else {
+                document.getElementById('chat-name').value = '';
+            }
+
+            fetchChat();
+        }
+
+        function closeChat() {
+            document.body.classList.remove('chat-open');
+            document.getElementById('chat-sidebar').classList.remove('active');
+        }
+
+        async function sendChatMessage() {
+            const nameInput = document.getElementById('chat-name');
+            const msgInput = document.getElementById('chat-message');
+            const gameSelect = document.getElementById('chat-game-select');
+            
+            let inputName = nameInput.value.trim();
+            const message = msgInput.value.trim();
+            const gameId = gameSelect.value ? parseInt(gameSelect.value, 10) : null;
+            if (!message) return;
+            
+            const isAa = message.toLowerCase().startsWith('/a');
+            
+            if (isAa) {
+                const lines = message.split('\n');
+                if (lines.some(line => line.trim().length > 1000)) {
+                    showToast("アスキーアートの1行の最大文字数は1000文字までです", "error");
+                    return;
+                }
+            } else if (message.length > 300) {
+                showToast("通常チャットの最大文字数は300文字です", "error");
+                return;
+            }
+            
+            const lineCount = (message.match(/\n/g) || []).length + 1;
+            if (lineCount >= 9 && !isAa) {
+                showToast("AA（アスキーアート）を送信する場合は先頭に /a を付けてください", "error");
+                msgInput.value = '';
+                msgInput.style.height = 'auto';
+                return;
+            }
+            if (inputName && inputName !== '名無しさん') {
+                localStorage.setItem('chat_name', inputName);
+            } else {
+                localStorage.removeItem('chat_name');
+            }
+            let name = inputName || '名無しさん';
+            
+            // Optimistic update
+            const tempMsg = {
+                id: 'temp_chat_' + Date.now(),
+                name: name,
+                message: message,
+                gameId: gameId,
+                timestamp: Date.now(),
+                clientId: myClientId,
+                replyTo: currentReplyToChat
+            };
+            chatMessages.push(tempMsg);
+            renderChat();
+            
+            msgInput.value = '';
+            msgInput.style.height = 'auto';
+            
+            try {
+                const res = await fetch('./post_chat.php', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name, message, gameId, clientId: myClientId, replyTo: currentReplyToChat })
+                });
+                cancelReply(false);
+                if (res.ok) {
+                    showChatNotification(tempMsg);
+                    fetchChat();
+                } else {
+                    showToast('チャット送信失敗', 'error');
+                    rollbackChatMessage(tempMsg);
+                }
+            } catch (e) {
+                showToast('通信エラー', 'error');
+                rollbackChatMessage(tempMsg);
+            }
+        }
+
+        function openChatGame(id) {
+            const game = games.find(g => g.id == id);
+            if (game) {
+                launchGame(game);
+            }
+        }
+
+        // --- Rendering ---
+
+        function renderFilters() {
+            // Category filter
+            const catContainer = document.getElementById('category-filter');
+            if (!catContainer) return;
+            const availableCategories = Array.from(new Set(games.map(g => g.category).filter(Boolean)));
+            
+            // サーバーから取得した順序に基づいて並び替え
+            const sortedCategories = [...availableCategories].sort((a, b) => {
+                const orderA = serverConfig.categoryOrder ? serverConfig.categoryOrder.indexOf(a) : -1;
+                const orderB = serverConfig.categoryOrder ? serverConfig.categoryOrder.indexOf(b) : -1;
+                
+                if (orderA === -1 && orderB === -1) return a.localeCompare(b);
+                if (orderA === -1) return 1;
+                if (orderB === -1) return -1;
+                return orderA - orderB;
+            });
+
+            let catHtml = `<div class="category-chip ${currentCategory === 'all' ? 'active' : ''}" data-cat="all" onclick="App.setCategory('all')">すべて</div>`;
+            
+            sortedCategories.forEach((cat, idx) => {
+                const label = CATEGORY_LABELS[cat] || cat;
+                const isActive = currentCategory === cat;
+                catHtml += `
+                    <div class="category-chip ${isActive ? 'active' : ''}" 
+                         data-cat="${escapeHtml(cat)}" 
+                         draggable="true"
+                         oncontextmenu="return false;"
+                         onclick="App.setCategory('${escapeHtml(cat)}')"
+                         ondragstart="App.handleCategoryDragStart(event, ${idx})"
+                         ondragover="App.handleCategoryDragOver(event)"
+                         ondrop="App.handleCategoryDrop(event, ${idx})"
+                         ondragend="App.handleCategoryDragEnd(event)">
+                        ${escapeHtml(label)}
+                    </div>`;
+            });
+            catContainer.innerHTML = catHtml;
+
+            // Ranking Toggle (Separate from categories)
+            const rankingContainer = document.getElementById('ranking-toggle-container');
+            if (rankingContainer) {
+                rankingContainer.innerHTML = `
+                    <div class="category-chip ${isRankingActive ? 'active' : ''}" onclick="App.toggleRanking()" style="margin-left: 0; margin-right: 12px; border-color: rgba(255, 215, 0, 0.4);">
+                        🏆 ランキング
+                    </div>
+                `;
+            }
+
+        }
+
+        function renderGames() {
+            const grid = els.grid;
+            if (!grid) return;
+            grid.innerHTML = '';
+
+            const searchTerm = els.searchInput ? els.searchInput.value.toLowerCase().trim() : '';
+            
+            filteredGames = games.filter(game => {
+                const matchesSearch = !searchTerm || game.name.toLowerCase().includes(searchTerm);
+                const matchesCategory = currentCategory === 'all' || game.category === currentCategory;
+
+                return matchesSearch && matchesCategory;
+            });
+
+            if (isRankingActive) {
+                // ランキング有効時は起動回数順（降順）
+                filteredGames.sort((a, b) => (b.playCount || 0) - (a.playCount || 0));
+            } else { filteredGames.sort((a, b) => { if (a.isPinned && !b.isPinned) return -1; if (!a.isPinned && b.isPinned) return 1; if (a.hasUpdate && !b.hasUpdate) return -1; if (!a.hasUpdate && b.hasUpdate) return 1; return (b.lastPlayed || 0) - (a.lastPlayed || 0); }); }
+
+            if (filteredGames.length === 0 && games.length > 0) {
+                grid.innerHTML = `
+                    <div class="empty-state">
+                        <div class="empty-state-icon">🔍</div>
+                        <div class="empty-state-text">該当するツールが見つかりません</div>
+                        <div class="empty-state-hint">検索条件を変更するか、新しいツールを追加してください</div>
+                    </div>`;
+                return;
+            }
+
+            const fragment = document.createDocumentFragment();
+            const readHistory = getReadHistory();
+
+            filteredGames.forEach((game, index) => {
+                const card = document.createElement('div');
+                card.className = 'game-card' + (game.isPinned ? ' pinned' : '');
+                card.dataset.index = index;
+                card.dataset.id = game.id;
+                card.draggable = true;
+                card.tabIndex = 0;
+                card.setAttribute('role', 'button');
+                card.setAttribute('aria-label', `${game.name}、Enterで起動`);
+
+                // Events for Drag & Drop
+                card.addEventListener('dragstart', e => handleDragStart(e, index));
+                card.addEventListener('dragover', handleDragOver);
+                card.addEventListener('drop', e => handleDrop(e, index));
+                card.addEventListener('dragenter', handleDragEnter);
+                card.addEventListener('dragleave', handleDragLeave);
+                card.addEventListener('dragend', handleDragEnd);
+                
+                card.addEventListener('keydown', e => handleCardKeydown(e, index));
+                card.addEventListener('focus', () => { focusedCardIndex = index; card.classList.add('focused'); });
+                card.addEventListener('blur', () => card.classList.remove('focused'));
+
+                card.addEventListener('click', e => {
+                    if (e.target.closest('.edit-btn') || e.target.closest('.pin-btn')) return;
+                    launchGame(game);
+                });
+
+                // --- UPDATE / NEW / PINNED Badge Logic ---
+                const lastReadTime = readHistory[game.id] || 0;
+
+                const createdAtMs = game.createdAt ? (game.createdAt > 9999999999 ? game.createdAt : game.createdAt * 1000) : 0;
+                const remoteUpdatedMs = game.remoteUpdatedAt ? (game.remoteUpdatedAt > 9999999999 ? game.remoteUpdatedAt : game.remoteUpdatedAt * 1000) : 0;
+                const manualUpdatedMs = game.updatedAt ? (game.updatedAt > 9999999999 ? game.updatedAt : game.updatedAt * 1000) : 0;
+                const latestUpdateMs = Math.max(remoteUpdatedMs, manualUpdatedMs);
+
+                const isActuallyUpdated = (latestUpdateMs - createdAtMs) > 1000;
+                const isNew = createdAtMs && (Date.now() - createdAtMs < 7 * 24 * 60 * 60 * 1000) && (lastReadTime < createdAtMs);
+                const isUpdate = (lastReadTime < latestUpdateMs) && (isActuallyUpdated || game.hasUpdate);
+
+                let badge = '';
+                if (isUpdate) {
+                    badge = '<span class="card-badge" style="background: var(--warning-color); color: #000;">UPDATE</span>';
+                } else if (isNew) {
+                    badge = '<span class="card-badge new">NEW</span>';
+                }
+                
+                // --- Active Badge Logic ---
+                const now = Date.now();
+                const lastPlayed = game.lastPlayed || 0;
+                const diffMs = now - lastPlayed;
+                let activeBadge = '';
+                if (isRankingActive) { const plays = game.playCount || 0; activeBadge = `<span class="active-badge" style="background: rgba(0, 0, 0, 0.8); color: #ffd700; border: 1px solid #ff4757; padding: 4px 8px; font-size: 12px; letter-spacing: 0.5px;">👑 ${plays}</span>`; } else if (lastPlayed > 0 && diffMs < 3600000) {
+                    const diffMins = Math.floor(diffMs / 60000);
+                    activeBadge = `
+                        <span class="active-badge">
+                            ${diffMins}分前アクティブ
+                        </span>`;
+                }
+
+                const catLabel = game.category ? (CATEGORY_LABELS[game.category] || game.category) : '';
+                const catHtml = catLabel ? `<div class="card-category">${escapeHtml(catLabel)}</div>` : '';
+
+                const imgUrl = game.image || generatePlaceholderImage(game.name);
+
+                let creatorBadge = '';
+                if (game.creator) {
+                    creatorBadge = `<span class="creator-badge">${escapeHtml(game.creator)}</span>`;
+                }
+
+                card.innerHTML = `
+                    ${badge}
+                    ${activeBadge}
+                    ${creatorBadge}
+                    <button class="pin-btn" title="${game.isPinned ? '固定を解除' : '位置を固定'}" onclick="App.togglePin(${JSON.stringify(game.id)}, event)">${game.isPinned ? '✖️' : '📌'}</button>
+                    <button class="edit-btn" title="編集" onclick="App.openGameModal(${JSON.stringify(game.id)}, event)" aria-label="${escapeHtml(game.name)}を編集">✎</button>
+                    <img alt="" loading="lazy">
+                    <div class="title-bar" title="${escapeHtml(game.name)}">${escapeHtml(game.name)}</div>
+                    ${catHtml}
+                `;
+                const img = card.querySelector('img');
+                if (img) {
+                    img.src = imgUrl;
+                    img.onload = () => img.classList.add('loaded');
+                    img.onerror = () => { img.src = generatePlaceholderImage(game.name); };
+                }
+                fragment.appendChild(card);
+            });
+
+            // Add button
+            const addCard = document.createElement('div');
+            addCard.className = 'game-card add-card';
+            addCard.id = 'add-card-btn';
+            addCard.innerHTML = `
+                <div style="width: 100%; aspect-ratio: 16 / 9; flex-grow: 1;"></div>
+                <div class="title-bar" style="visibility: hidden;">..</div>
+                <div class="card-category" style="visibility: hidden;">..</div>
+                <div style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: flex; justify-content: center; align-items: center; font-size: 48px;">＋</div>
+            `;
+            addCard.title = "新しいツールを追加 (N)";
+            addCard.setAttribute('role', 'button');
+            addCard.setAttribute('tabindex', '0');
+            addCard.setAttribute('aria-label', '新しいツールを追加');
+            addCard.onclick = () => openGameModal();
+            addCard.addEventListener('keydown', e => { if (e.key === 'Enter') openGameModal(); });
+            fragment.appendChild(addCard);
+
+            grid.appendChild(fragment);
+        }
+
+        // --- Pin Function ---
+        function togglePin(id, event) {
+            if (event) event.stopPropagation();
+            const index = games.findIndex(g => g.id == id);
+            if (index !== -1) {
+                games[index].isPinned = !games[index].isPinned;
+                games[index].updatedAt = Date.now();
+                showToast(games[index].isPinned ? 'ピン留めしました' : 'ピン留めを解除しました', 'success');
+                renderGames();
+                saveGamesToServer();
+            }
+        }
+
+        // --- Category Drag & Drop ---
+        function handleCategoryDragStart(e, index) {
+            categoryDragStartIndex = index;
+            e.currentTarget.classList.add('dragging');
+            e.dataTransfer.effectAllowed = 'move';
+        }
+
+        function handleCategoryDragOver(e) {
+            e.preventDefault();
+        }
+
+        function handleCategoryDrop(e, dropIndex) {
+            e.preventDefault();
+            if (categoryDragStartIndex === null || categoryDragStartIndex === dropIndex) return;
+
+            const availableCategories = Array.from(new Set(games.map(g => g.category).filter(Boolean)));
+            if (categoryDragStartIndex < 0 || categoryDragStartIndex >= availableCategories.length ||
+                dropIndex < 0 || dropIndex >= availableCategories.length) return;
+            const sortedCategories = [...availableCategories].sort((a, b) => {
+                const orderA = serverConfig.categoryOrder ? serverConfig.categoryOrder.indexOf(a) : -1;
+                const orderB = serverConfig.categoryOrder ? serverConfig.categoryOrder.indexOf(b) : -1;
+                if (orderA === -1 && orderB === -1) return a.localeCompare(b);
+                if (orderA === -1) return 1;
+                if (orderB === -1) return -1;
+                return orderA - orderB;
+            });
+
+            const [movedItem] = sortedCategories.splice(categoryDragStartIndex, 1);
+            sortedCategories.splice(dropIndex, 0, movedItem);
+
+            serverConfig.categoryOrder = sortedCategories;
+            saveConfigToServer();
+            renderFilters();
+            showToast('カテゴリーの順序を更新しました', 'success');
+        }
+
+        function handleCategoryDragEnd(e) {
+            e.currentTarget.classList.remove('dragging');
+            categoryDragStartIndex = null;
+        }
+
+        // === 起動時に順番を入れ替える（ピン留め以外） ===
+        function launchGame(game) {
+            if (!game.url) return;
+            // window.openの'_self'はnoopenerオプションを無視する（referrer漏洩対策）ため、
+            // 同一タブで開く場合はlocation.hrefで直接遷移する
+            if (localConfig.openInNewTab) {
+                window.open(game.url, '_blank', 'noopener,noreferrer');
+            } else {
+                window.location.href = game.url;
+            }
+            
+            // 個人の既読時刻を記録
+            setReadHistoryEntry(game.id, Date.now());
+
+            // 起動回数をインクリメント
+            game.playCount = (game.playCount || 0) + 1;
+
+            // ローカルバックアップも更新
+            try { localStorage.setItem('games_backup_tool', JSON.stringify(games)); } catch(e) {}
+
+            // アクティブユーザー情報を更新（ユニークIDを使用）
+            const userId = getUniqueUserId();
+            if (!game.activeUsers || Array.isArray(game.activeUsers)) game.activeUsers = {}; 
+            game.activeUsers[userId] = Date.now();
+
+            // 1時間以上前の古いユーザーデータを削除して肥大化を防ぐ
+            const oneHourAgo = Date.now() - 3600000;
+            for (const id in game.activeUsers) {
+                if (game.activeUsers[id] < oneHourAgo) {
+                    delete game.activeUsers[id];
+                }
+            }
+
+            // ピン留めされていない場合のみ、先頭（ピン留めの下）に移動
+            if (!game.isPinned) {
+                const globalIndex = games.findIndex(g => g.id === game.id);
+                if (globalIndex > -1) {
+                    const [playedGame] = games.splice(globalIndex, 1);
+                    playedGame.lastPlayed = Date.now();
+                    playedGame.hasUpdate = false;
+                    
+                    // 最初の非ピン留めアイテムのインデックスを探す
+                    let insertIndex = 0;
+                    while (insertIndex < games.length && games[insertIndex].isPinned) {
+                        insertIndex++;
+                    }
+                    games.splice(insertIndex, 0, playedGame);
+                    
+                    saveGamesToServer();       
+                    renderGames();             
+                }
+            } else {
+                // ピン留めされている場合は時刻だけ更新
+                game.lastPlayed = Date.now();
+                game.hasUpdate = false;
+                saveGamesToServer();
+                renderGames();
+            }
+        }
+
+        function setCategory(cat) {
+            if (currentCategory === cat) {
+                currentCategory = 'all';
+            } else {
+                currentCategory = cat;
+            }
+            renderGames();
+        }
+
+        // --- Drag & Drop (Games) ---
+
+        function handleDragStart(e, index) {
+            if (els.searchInput.value.trim() !== '' || currentCategory !== 'all') {
+                e.preventDefault();
+                showToast('検索中またはフィルタ中は並び替えできません', 'warning');
+                return;
+            }
+            dragStartIndex = index;
+            e.currentTarget.classList.add('dragging');
+            e.dataTransfer.effectAllowed = 'move';
+            e.dataTransfer.setData('text/plain', index);
+        }
+
+        function handleDragOver(e) { e.preventDefault(); }
+
+        function handleDragEnter(e) {
+            e.preventDefault();
+            const card = e.currentTarget;
+            if (!card.classList.contains('add-card') && !card.classList.contains('dragging')) {
+                card.style.transform = `scale(${localConfig.enableAnimations ? '1.02' : '1'})`;
+                card.style.borderColor = 'var(--focus-color)';
+            }
+        }
+
+        function handleDragLeave(e) {
+            const card = e.currentTarget;
+            if (!card.classList.contains('dragging')) {
+                card.style.transform = '';
+                card.style.borderColor = '';
+            }
+        }
+
+        function handleDrop(e, dropIndex) {
+            e.preventDefault();
+            const card = e.currentTarget;
+            card.style.transform = '';
+            card.style.borderColor = '';
+
+            if (dragStartIndex === null || dragStartIndex === dropIndex) return;
+            if (dragStartIndex < 0 || dragStartIndex >= filteredGames.length ||
+                dropIndex < 0 || dropIndex >= filteredGames.length) return;
+
+            // フィルター適用後のリストを元に、元の games 配列を操作
+            const movedId = filteredGames[dragStartIndex].id;
+            const targetId = filteredGames[dropIndex].id;
+            
+            const fromIndex = games.findIndex(g => g.id === movedId);
+            const toIndex = games.findIndex(g => g.id === targetId);
+            if (fromIndex === -1 || toIndex === -1) return;
+
+            const [item] = games.splice(fromIndex, 1);
+            games.splice(toIndex, 0, item);
+            
+            renderGames();
+            saveGamesToServer(); 
+            showToast('並び順を変更しました', 'success');
+        }
+
+        function handleDragEnd() {
+            document.querySelectorAll('.game-card').forEach(c => {
+                c.classList.remove('dragging');
+                c.style.transform = '';
+                c.style.borderColor = '';
+            });
+            dragStartIndex = null;
+        }
+
+        // --- Keyboard Navigation ---
+
+        function handleCardKeydown(e, index) {
+            const cards = document.querySelectorAll('.game-card:not(.add-card)');
+            const cols = Math.floor(els.grid.offsetWidth / (els.grid.children[0]?.offsetWidth || 240));
+
+            switch(e.key) {
+                case 'ArrowRight':
+                    e.preventDefault();
+                    if (index + 1 < cards.length) cards[index + 1].focus();
+                    break;
+                case 'ArrowLeft':
+                    e.preventDefault();
+                    if (index - 1 >= 0) cards[index - 1].focus();
+                    break;
+                case 'ArrowDown':
+                    e.preventDefault();
+                    if (index + cols < cards.length) cards[index + cols].focus();
+                    break;
+                case 'ArrowUp':
+                    e.preventDefault();
+                    if (index - cols >= 0) cards[index - cols].focus();
+                    break;
+                case 'Enter':
+                    e.preventDefault();
+                    launchGame(filteredGames[index]);
+                    break;
+                case 'Delete':
+                case 'd':
+                    if (e.key === 'd' && !e.ctrlKey) break;
+                    e.preventDefault();
+                    openGameModal(filteredGames[index].id);
+                    setTimeout(() => document.getElementById('btn-delete').click(), 100);
+                    break;
+            }
+        }
+
+        document.addEventListener('keydown', e => {
+            // 画像ライトボックスが開いている場合は、Escで閉じる（ゲームカードの操作は行わない）
+            if (e.key === 'Escape') {
+                const imageModal = document.getElementById('image-modal');
+                if (imageModal && imageModal.style.display === 'flex') {
+                    closeImageModal();
+                    return;
+                }
+            }
+
+            if (els.gameModal.classList.contains('active') || els.settingsModal.classList.contains('active')) return;
+
+            if (e.key === 'Escape') {
+                els.searchInput.value = '';
+                els.searchInput.blur();
+                currentCategory = 'all';
+                renderGames();
+            }
+        });
+
+        // --- Modal Management ---
+
+        function openGameModal(id = null, event = null) {
+            if (event) event.stopPropagation();
+
+            const idInput = document.getElementById('game-id');
+            const nameInput = document.getElementById('game-name');
+            const urlInput = document.getElementById('game-url');
+            const imageInput = document.getElementById('game-image');
+            const categoryInput = document.getElementById('game-category');
+            const deleteBtn = document.getElementById('btn-delete');
+            const titleEl = document.getElementById('modal-title');
+
+            const defaultCategories = ['dev', 'network', 'monitor', 'admin', 'docs', 'data', 'security', 'utility'];
+            const allUsedCategories = new Set(games.map(g => g.category).filter(Boolean));
+            
+            let optionsHtml = `<option value="">未分類</option>`;
+            
+            defaultCategories.forEach(cat => {
+                optionsHtml += `<option value="${cat}">${CATEGORY_LABELS[cat]}</option>`;
+            });
+            
+            allUsedCategories.forEach(cat => {
+                if (!defaultCategories.includes(cat)) {
+                    optionsHtml += `<option value="${escapeHtml(cat)}">${escapeHtml(cat)}</option>`;
+                }
+            });
+            
+            optionsHtml += `<option value="__new__">＋ 新規カテゴリー...</option>`;
+            
+            categoryInput.innerHTML = optionsHtml;
+
+            if (id !== null) {
+                const game = games.find(g => g.id == id);
+                if (!game) return;
+                titleEl.textContent = 'ツールを編集';
+                idInput.value = game.id;
+                nameInput.value = game.name;
+                urlInput.value = game.url;
+                imageInput.value = (game.image && !game.image.startsWith('data:')) ? game.image : '';
+                const existingOptions = Array.from(categoryInput.options).map(o => o.value);
+                if (game.category && !existingOptions.includes(game.category)) {
+                    categoryInput.value = '__new__';
+                    const newInput = document.getElementById('game-category-new');
+                    newInput.style.display = 'block';
+                    newInput.value = game.category;
+                } else {
+                    categoryInput.value = game.category || '';
+                    document.getElementById('game-category-new').style.display = 'none';
+                    document.getElementById('game-category-new').value = '';
+                }
+                document.getElementById('game-creator').value = game.creator || '';
+                deleteBtn.style.display = 'flex';
+                deleteBtn.onclick = () => deleteGame(id);
+            } else {
+                titleEl.textContent = 'ツールを追加';
+                idInput.value = '';
+                nameInput.value = '';
+                urlInput.value = '';
+                imageInput.value = '';
+                categoryInput.value = '';
+                document.getElementById('game-category-new').style.display = 'none';
+                document.getElementById('game-category-new').value = '';
+                document.getElementById('game-creator').value = '';
+                deleteBtn.style.display = 'none';
+            }
+
+            els.gameModal.classList.add('active');
+            setTimeout(() => nameInput.focus(), 100);
+        }
+
+        function closeGameModal() {
+            els.gameModal.classList.remove('active');
+            if (focusedCardIndex >= 0) {
+                const cards = document.querySelectorAll('.game-card:not(.add-card)');
+                if (cards[focusedCardIndex]) cards[focusedCardIndex].focus();
+            }
+        }
+
+        function saveGame() {
+            const idStr = document.getElementById('game-id').value;
+            const name = document.getElementById('game-name').value.trim();
+            const url = document.getElementById('game-url').value.trim();
+            let category = document.getElementById('game-category').value;
+            if (category === '__new__') {
+                category = document.getElementById('game-category-new').value.trim();
+            }
+            let image = document.getElementById('game-image').value.trim();
+
+            const creator = document.getElementById('game-creator').value.trim();
+
+            if (!name || !url) {
+                showToast('タイトルとURLは必須項目です', 'warning');
+                return;
+            }
+
+            if (idStr) {
+                const id = String(idStr).trim();
+                const index = games.findIndex(g => String(g.id) === id);
+                if (index !== -1) {
+                    if (!image) {
+                        image = (games[index].name !== name) ? generatePlaceholderImage(name) : games[index].image;
+                    }
+                    const updatedGame = { 
+                        ...games[index], 
+                        id, name, url, image, category, creator,
+                        updatedAt: Date.now()
+                    };
+                    
+                    // 編集された場合は位置を維持
+                    games[index] = updatedGame;
+                    showToast('ツールを更新しました', 'success');
+                }
+            } else {
+                if (!image) image = generatePlaceholderImage(name);
+                const newGame = {
+                    id: Date.now(),
+                    name, url, image, category, creator,
+                    createdAt: Date.now(),
+                    updatedAt: Date.now(),
+                    isPinned: false
+                };
+                
+                // 新規ツールを先頭（ピン留めの下）に追加
+                let insertIndex = 0;
+                while (insertIndex < games.length && games[insertIndex].isPinned) {
+                    insertIndex++;
+                }
+                games.splice(insertIndex, 0, newGame);
+                
+                showToast('ツールを追加しました', 'success');
+            }
+
+            renderGames();
+            renderFilters();
+            closeGameModal();
+            saveGamesToServer();
+        }
+
+        function deleteGame(id) {
+            if (!confirm('このツールを削除しますか？')) return;
+            const game = games.find(g => g.id == id);
+            if (game) {
+                games = games.filter(g => g.id !== id);
+                renderGames();
+                renderFilters();
+                closeGameModal();
+                saveGamesToServer();
+                showToast('ツールを削除しました', 'success');
+            }
+        }
+
+        function renderSettingsCategories() {
+            const container = document.getElementById('settings-category-list');
+            const categories = new Set(games.map(g => g.category).filter(Boolean));
+
+            if (categories.size === 0) {
+                container.innerHTML = '<span style="color:#666; font-size:12px;">現在使用されているカテゴリーはありません。</span>';
+                return;
+            }
+
+            let html = '';
+            categories.forEach(cat => {
+                const label = CATEGORY_LABELS[cat] || cat;
+                const safeCat = escapeHtml(cat).replace(/'/g, "\\'");
+                html += `
+                    <div class="category-manage-chip">
+                        <span>${escapeHtml(label)}</span>
+                        <button type="button" title="削除" onclick="App.deleteCategory('${safeCat}')">×</button>
+                    </div>
+                `;
+            });
+            container.innerHTML = html;
+        }
+
+        function deleteCategory(cat) {
+            const label = CATEGORY_LABELS[cat] || cat;
+            
+            let isUpdated = false;
+            games = games.map(g => {
+                if (g.category === cat) {
+                    isUpdated = true;
+                    return { ...g, category: '', updatedAt: Date.now() };
+                }
+                return g;
+            });
+
+            if (isUpdated) {
+                saveGamesToServer(); 
+                renderGames();
+                renderFilters();       
+            }
+
+            if (currentCategory === cat) {
+                currentCategory = 'all';
+                renderGames();
+            }
+
+            renderSettingsCategories(); 
+            renderFilters();
+            showToast(`カテゴリー「${label}」を削除しました`, 'success');
+        }
+
+        // --- Settings Management (Local & Server) ---
+
+        function openSettings() {
+            // Local Config
+            const currentSize = localConfig.gridSize || '240px';
+            const sizeSelect = document.getElementById('setting-grid-size');
+            const sizeCustom = document.getElementById('setting-grid-size-custom');
+            let sizeExists = Array.from(sizeSelect.options).some(opt => opt.value === currentSize);
+            
+            if (sizeExists) {
+                sizeSelect.value = currentSize;
+                sizeCustom.style.display = 'none';
+            } else {
+                sizeSelect.value = 'custom';
+                sizeCustom.style.display = 'block';
+                sizeCustom.value = parseInt(currentSize) || 240;
+            }
+
+            document.getElementById('setting-clock-format').value = localConfig.clockFormat || '24h';
+            document.getElementById('setting-accent-color').value = localConfig.accentColor || '#00e6e6';
+            document.getElementById('setting-border-radius').value = localConfig.borderRadius || '8px';
+            document.getElementById('setting-card-gap').value = localConfig.cardGap || '20px';
+            
+            document.getElementById('setting-show-title').checked = localConfig.showTitle ?? true;
+            document.getElementById('setting-new-tab').checked = localConfig.openInNewTab ?? true;
+            document.getElementById('setting-animations').checked = localConfig.enableAnimations ?? true;
+            document.getElementById('setting-light-mode').checked = localConfig.isLightMode ?? false;
+
+            // Server Config
+            document.getElementById('setting-bg-image').value = serverConfig.bgImage || '';
+
+            renderSettingsCategories();
+            els.settingsModal.classList.add('active');
+            loadServerBackups();
+
+        }
+
+        function closeSettings() {
+            els.settingsModal.classList.remove('active');
+        }
+
+        function saveSettings() {
+            // ローカル（個人）設定の保存
+            let newSize = document.getElementById('setting-grid-size').value;
+            if (newSize === 'custom') {
+                const customVal = document.getElementById('setting-grid-size-custom').value;
+                newSize = customVal ? `${customVal}px` : '240px';
+            }
+
+            localConfig = {
+                gridSize: newSize,
+                clockFormat: document.getElementById('setting-clock-format').value,
+                accentColor: document.getElementById('setting-accent-color').value,
+                borderRadius: document.getElementById('setting-border-radius').value,
+                cardGap: document.getElementById('setting-card-gap').value,
+                showTitle: document.getElementById('setting-show-title').checked,
+                openInNewTab: document.getElementById('setting-new-tab').checked,
+                enableAnimations: document.getElementById('setting-animations').checked,
+                isLightMode: document.getElementById('setting-light-mode').checked
+            };
+            localStorage.setItem('tool_local_config', JSON.stringify(localConfig));
+
+            // サーバー（全体）設定の保存
+            serverConfig = {
+                ...serverConfig,
+                bgImage: document.getElementById('setting-bg-image').value.trim()
+            };
+
+            saveConfigToServer();
+            applyConfig();
+            closeSettings();
+        }
+
+        function applyConfig() {
+            const root = document.documentElement;
+
+            // Apply Local Config
+            root.style.setProperty('--grid-min-width', localConfig.gridSize);
+            root.style.setProperty('--focus-color', localConfig.accentColor);
+            root.style.setProperty('--focus-color-rgb', hexToRgb(localConfig.accentColor));
+            root.style.setProperty('--card-radius', localConfig.borderRadius);
+            root.style.setProperty('--grid-gap', localConfig.cardGap);
+            root.style.setProperty('--hover-scale', localConfig.enableAnimations ? '1.04' : '1.0');
+            document.body.classList.toggle('hide-titles', !localConfig.showTitle);
+            document.body.classList.toggle('light-mode', localConfig.isLightMode === true);
+            
+            // Apply Server Config
+            document.body.style.backgroundImage = serverConfig.bgImage ? `url('${serverConfig.bgImage}')` : 'none';
+        }
+
+        // --- Data Management ---
+
+        function exportData() {
+            const a = document.createElement("a");
+            a.href = './manage_backups.php?action=export';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            showToast('ZIPエクスポートを開始しました', 'success');
+        }
+
+        function handleGridSizeChange() {
+            const val = document.getElementById('setting-grid-size').value;
+            document.getElementById('setting-grid-size-custom').style.display = (val === 'custom') ? 'block' : 'none';
+        }
+
+        async function importData(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            
+            if (file.name.endsWith('.json')) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    try {
+                        const imported = JSON.parse(e.target.result);
+                        if (Array.isArray(imported)) {
+                            games = imported.map(g => ({ ...g, createdAt: g.createdAt || Date.now() }));
+                        } else if (imported && typeof imported === 'object') {
+                            if (Array.isArray(imported.games)) games = imported.games;
+                            if (imported.serverConfig) {
+                                serverConfig = { ...DEFAULT_SERVER_CONFIG, ...imported.serverConfig };
+                                saveConfigToServer();
+                            } else if (imported.config) {
+                                serverConfig = { ...DEFAULT_SERVER_CONFIG, ...imported.config };
+                                saveConfigToServer();
+                            }
+                            if (imported.localConfig) {
+                                localConfig = { ...DEFAULT_LOCAL_CONFIG, ...imported.localConfig };
+                                localStorage.setItem('tool_local_config', JSON.stringify(localConfig));
+                            }
+                        } else {
+                            throw new Error("Invalid format");
+                        }
+                        applyConfig();
+                        renderGames();
+                        renderFilters();
+                        saveGamesToServer();
+                        closeSettings();
+                        showToast('データのインポートが完了しました', 'success');
+                    } catch (error) {
+                        showToast('ファイルの読み込みに失敗しました', 'error');
+                        console.error(error);
+                    }
+                    event.target.value = '';
+                };
+                reader.readAsText(file);
+                return;
+            }
+
+            const formData = new FormData();
+            formData.append('action', 'upload_restore');
+            formData.append('file', file);
+            
+            try {
+                showToast('ZIP復元中...', 'info');
+                const res = await fetch('./manage_backups.php', {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await res.json();
+                if (data.status === 'success') {
+                    showToast('インポートが完了しました。ページを再読み込みします。', 'success');
+                    setTimeout(() => location.reload(), 1500);
+                } else {
+                    showToast(data.message || 'インポートに失敗しました', 'error');
+                }
+            } catch(e) {
+                showToast('通信エラー', 'error');
+                console.error(e);
+            }
+            event.target.value = '';
+        }
+
+        async function loadServerBackups() {
+            const select = document.getElementById('server-backup-select');
+            if(!select) return;
+            select.innerHTML = '<option value="">読込中...</option>';
+            try {
+                const res = await fetch('./manage_backups.php?action=list');
+                const data = await res.json();
+                if (data.status === 'success' && Array.isArray(data.backups)) {
+                    if (data.backups.length === 0) {
+                        select.innerHTML = '<option value="">バックアップがありません</option>';
+                    } else {
+                        let html = '';
+                        data.backups.forEach(b => {
+                            const dateStr = new Date(b.time * 1000).toLocaleString();
+                            const sizeKb = Math.round(b.size / 1024);
+                            html += `<option value="${b.filename}">${dateStr} (${sizeKb}KB)</option>`;
+                        });
+                        select.innerHTML = html;
+                    }
+                } else {
+                    select.innerHTML = '<option value="">読み込み失敗</option>';
+                }
+            } catch(e) {
+                select.innerHTML = '<option value="">通信エラー</option>';
+            }
+        }
+
+        async function createServerBackup() {
+            try {
+                const res = await fetch('./manage_backups.php', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: 'create' })
+                });
+                const data = await res.json();
+                if (data.status === 'success') {
+                    showToast(data.message, 'success');
+                    loadServerBackups();
+                } else {
+                    showToast(data.message || '作成失敗', 'error');
+                }
+            } catch(e) {
+                showToast('通信エラー', 'error');
+            }
+        }
+
+        async function restoreServerBackup() {
+            const select = document.getElementById('server-backup-select');
+            if (!select) return;
+            const filenames = Array.from(select.selectedOptions).map(opt => opt.value).filter(v => v !== '');
+            if (filenames.length !== 1) {
+                showToast('復元するバックアップを「1つだけ」選択してください', 'warning');
+                return;
+            }
+            const filename = filenames[0];
+            if (!confirm('選択したバックアップから復元します。現在のデータは上書きされますが、続行しますか？')) return;
+            try {
+                const res = await fetch('./manage_backups.php', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: 'restore', filename: filename })
+                });
+                const data = await res.json();
+                if (data.status === 'success') {
+                    showToast(data.message, 'success');
+                    setTimeout(() => location.reload(), 1500);
+                } else {
+                    showToast(data.message || '復元失敗', 'error');
+                }
+            } catch(e) {
+                showToast('通信エラー', 'error');
+            }
+        }
+
+        async function deleteServerBackup() {
+            const select = document.getElementById('server-backup-select');
+            if (!select) return;
+            const filenames = Array.from(select.selectedOptions).map(opt => opt.value).filter(v => v !== '');
+            if (filenames.length === 0) {
+                showToast('削除するバックアップを選択してください', 'warning');
+                return;
+            }
+            if (!confirm(filenames.length + '件のバックアップを削除しますか？')) return;
+            try {
+                let successCount = 0;
+                for (const filename of filenames) {
+                    const res = await fetch('./manage_backups.php', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ action: 'delete', filename: filename })
+                    });
+                    const data = await res.json();
+                    if (data.status === 'success') {
+                        successCount++;
+                    }
+                }
+                showToast(successCount + '件のバックアップを削除しました', 'success');
+                loadServerBackups();
+            } catch(e) {
+                showToast('通信エラー', 'error');
+            }
+        }
+
+
+
+        function updateClock() {
+            // 時計機能は削除されているが、互換性のために残す
+        }
+
+        // --- Initialization ---
+
+        async function init() {
+            els.grid = document.getElementById('game-grid');
+            const chatMsgInput = document.getElementById('chat-message');
+            if (chatMsgInput) {
+                chatMsgInput.addEventListener('keydown', e => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        sendChatMessage();
+                        chatMsgInput.style.height = 'auto';
+                    }
+                });
+                chatMsgInput.addEventListener('input', function() {
+                    this.style.height = 'auto';
+                    const maxH = window.innerHeight * 0.5;
+                    const newHeight = Math.min(this.scrollHeight, maxH);
+                    this.style.height = newHeight + 'px';
+                    this.style.overflowY = this.scrollHeight > maxH ? 'auto' : 'hidden';
+                });
+            }
+            
+            const shareMsgInput = document.getElementById('share-message');
+            if (shareMsgInput) {
+                shareMsgInput.addEventListener('keydown', e => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        submitShare();
+                    }
+                });
+                shareMsgInput.addEventListener('input', function() {
+                    this.style.height = 'auto';
+                    const maxH = window.innerHeight * 0.5;
+                    const newHeight = Math.min(this.scrollHeight, maxH);
+                    this.style.height = newHeight + 'px';
+                    this.style.overflowY = this.scrollHeight > maxH ? 'auto' : 'hidden';
+                });
+            }
+            
+            const stampSettingsSection = document.getElementById('stamp-settings-section');
+            
+            window.addEventListener('paste', e => {
+                if (els.settingsModal && els.settingsModal.classList.contains('active')) {
+                    if (e.clipboardData && e.clipboardData.items) {
+                        for (let i = 0; i < e.clipboardData.items.length; i++) {
+                            if (e.clipboardData.items[i].type.startsWith('image/')) {
+                                const file = e.clipboardData.items[i].getAsFile();
+                                if (file) {
+                                    e.preventDefault();
+                                    uploadCustomImageStamp(file);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+
+            if (stampSettingsSection) {
+                stampSettingsSection.addEventListener('dragover', e => {
+                    e.preventDefault();
+                    stampSettingsSection.style.outline = '2px dashed #007bff';
+                    stampSettingsSection.style.outlineOffset = '8px';
+                    stampSettingsSection.style.borderRadius = '8px';
+                    stampSettingsSection.style.background = 'rgba(0,123,255,0.05)';
+                    stampSettingsSection.style.paddingBottom = '16px';
+                    stampSettingsSection.style.marginBottom = '-16px';
+                });
+                stampSettingsSection.addEventListener('dragleave', e => {
+                    e.preventDefault();
+                    stampSettingsSection.style.outline = '';
+                    stampSettingsSection.style.outlineOffset = '';
+                    stampSettingsSection.style.borderRadius = '';
+                    stampSettingsSection.style.background = '';
+                    stampSettingsSection.style.paddingBottom = '';
+                    stampSettingsSection.style.marginBottom = '';
+                });
+                stampSettingsSection.addEventListener('drop', e => {
+                    e.preventDefault();
+                    stampSettingsSection.style.outline = '';
+                    stampSettingsSection.style.outlineOffset = '';
+                    stampSettingsSection.style.borderRadius = '';
+                    stampSettingsSection.style.background = '';
+                    stampSettingsSection.style.paddingBottom = '';
+                    stampSettingsSection.style.marginBottom = '';
+                    if (e.dataTransfer && e.dataTransfer.files) {
+                        for (let i = 0; i < e.dataTransfer.files.length; i++) {
+                            if (e.dataTransfer.files[i].type.startsWith('image/')) {
+                                uploadCustomImageStamp(e.dataTransfer.files[i]);
+                                break;
+                            }
+                        }
+                    }
+                });
+            }
+
+            setupShareDragAndDrop();
+            els.gameModal = document.getElementById('game-modal');
+            els.settingsModal = document.getElementById('settings-modal');
+            els.searchInput = document.getElementById('search-input');
+
+            const [configRes, gamesRes] = await Promise.allSettled([
+                fetch('./config.json?t=' + Date.now()),
+                fetch('./games.json?t=' + Date.now())
+            ]);
+
+            // Process config
+            if (configRes.status === 'fulfilled' && configRes.value.ok) {
+                try {
+                    const loadedConfig = await configRes.value.json();
+                    serverConfig = { ...DEFAULT_SERVER_CONFIG, ...loadedConfig };
+                    // 保存バックアップ: サーバー設定のローカルフォールバック用
+                    try { localStorage.setItem('config_backup_tool', JSON.stringify(serverConfig)); } catch(e) {}
+                } catch (e) {
+                    console.warn('Config parse failed');
+                }
+            } else {
+                console.warn('Config load failed, using defaults');
+                const localBackup = localStorage.getItem('config_backup_tool');
+                if (localBackup) {
+                    try {
+                        const parsed = JSON.parse(localBackup);
+                        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+                            serverConfig = { ...DEFAULT_SERVER_CONFIG, ...parsed };
+                        }
+                    } catch(e) {}
+                }
+            }
+            applyConfig();
+
+            // Process games
+            if (gamesRes.status === 'fulfilled' && gamesRes.value.ok) {
+                try {
+                    const loaded = await gamesRes.value.json();
+                    if (Array.isArray(loaded)) {
+                        games = loaded;
+                    }
+                } catch (e) {
+                    console.warn('Games parse failed');
+                }
+            } else {
+                console.warn('Games load failed');
+                const localGames = localStorage.getItem('games_backup_tool');
+                if (localGames) {
+                    try {
+                        const parsed = JSON.parse(localGames);
+                        if (Array.isArray(parsed)) {
+                            games = parsed;
+                            showToast('サーバーから読み込めなかったため、ローカルバックアップを復元しました', 'warning');
+                        }
+                    } catch(e) {}
+                }
+            }
+            await fetchStamps();
+
+            // ローカルバックアップを保存（サーバーから正常に取得できた場合）
+            try { localStorage.setItem('games_backup_tool', JSON.stringify(games)); } catch(e) {}
+
+            renderGames();
+            renderFilters();
+            restoreActiveNotifications();
+
+            // Auto Recovery Logic（サーバーが正常にロードできた場合のみ）
+            // 合計playCountだけで上書きすると他クライアントのデータを消去する恐れがある。
+            // 安全なマージ: サーバーに無いゲームをローカルから追加 + 同一IDはplayCountの大きい方を採用。
+            const localGamesStr = localStorage.getItem('games_backup_tool');
+            const serverLoadedOk = gamesRes.status === 'fulfilled' && gamesRes.value.ok;
+            if (localGamesStr && serverLoadedOk) {
+                try {
+                    const parsedBackup = JSON.parse(localGamesStr);
+                    const localGames = Array.isArray(parsedBackup) ? parsedBackup : null;
+                    if (localGames && localGames.length > 0) {
+                        const serverIds = new Set(games.map(g => g.id));
+                        const localIds = new Set(localGames.map(g => g.id));
+                        let changed = false;
+                        // 削除済みツールの復活を防ぐ: ローカルにしか無いツールは、
+                        // 直近24時間以内に更新されたもののみ再追加する（古いエントリは破棄）
+                        const mergeCutoffMs = Date.now() - 24 * 60 * 60 * 1000;
+                        for (const lg of localGames) {
+                            if (!serverIds.has(lg.id)) {
+                                const lu = lg.updatedAt ? Number(lg.updatedAt) : 0;
+                                if (lu >= mergeCutoffMs) {
+                                    games.push(lg);
+                                    changed = true;
+                                }
+                            }
+                        }
+                        for (let i = 0; i < games.length; i++) {
+                            const sg = games[i];
+                            if (localIds.has(sg.id)) {
+                                const lg = localGames.find(x => x.id === sg.id);
+                                if (lg && (lg.playCount || 0) > (sg.playCount || 0)) {
+                                    sg.playCount = lg.playCount;
+                                    changed = true;
+                                }
+                            }
+                        }
+                        if (changed) {
+                            console.log('Auto-merged local backup into server games.');
+                            saveGamesToServer();
+                            showToast('ローカルバックアップと統合しました', 'info');
+                            renderGames();
+                        }
+                    }
+                } catch(e) {}
+            }
+
+            let searchTimeout;
+            els.searchInput.addEventListener('input', () => {
+                clearTimeout(searchTimeout);
+                searchTimeout = setTimeout(renderGames, 150);
+            });
+
+            let mousedownTarget = null;
+            window.addEventListener('mousedown', e => {
+                mousedownTarget = e.target;
+            });
+
+            window.addEventListener('click', e => {
+                if (e.target === els.gameModal && mousedownTarget === els.gameModal) closeGameModal();
+                if (e.target === els.settingsModal && mousedownTarget === els.settingsModal) closeSettings();
+                
+                const isImageModalClick = e.target.closest('#image-modal') || (mousedownTarget && mousedownTarget.closest('#image-modal'));
+                const isPickerClick = e.target.closest('#reaction-picker') || (mousedownTarget && mousedownTarget.closest('#reaction-picker'));
+                
+                // Close chat if clicked outside (and not on a chat element or open button)
+                const chatSidebar = document.getElementById('chat-sidebar');
+                if (chatSidebar.classList.contains('active') && 
+                    !chatSidebar.contains(e.target) && 
+                    !e.target.closest('.chat-btn') && 
+                    !isImageModalClick && !isPickerClick) {
+                    if (mousedownTarget && !chatSidebar.contains(mousedownTarget) && !mousedownTarget.closest('.chat-btn')) {
+                        closeChat();
+                    }
+                }
+                
+                const shareSidebar = document.getElementById('share-sidebar');
+                if (shareSidebar.classList.contains('active') && 
+                    !shareSidebar.contains(e.target) && 
+                    !e.target.closest('.share-btn') && 
+                    !isImageModalClick && !isPickerClick) {
+                    if (mousedownTarget && !shareSidebar.contains(mousedownTarget) && !mousedownTarget.closest('.share-btn')) {
+                        closeShare();
+                    }
+                }
+            });
+
+            startAutoReload();
+        }
+
+        async function startAutoReload() {
+            try {
+                const res = await fetch('./check_timestamp.php?t=' + Date.now());
+                if (res.ok) {
+                    serverTimestamps = await res.json();
+                }
+            } catch(e) {}
+
+            setInterval(async () => {
+                if (isSaving) return;
+                try {
+                    const res = await fetch('./check_timestamp.php?t=' + Date.now());
+                    if (!res.ok) return;
+                    const ts = await res.json();
+                    
+                    if (serverTimestamps) {
+                        if (ts.games !== serverTimestamps.games || ts.config !== serverTimestamps.config) {
+                            console.log('Data changed remotely. Soft reloading...');
+                            let shouldRender = false;
+                            if (ts.games !== serverTimestamps.games) {
+                                const gRes = await fetch('./games.json?t=' + Date.now());
+                                if (gRes.ok) {
+                                    try {
+                                        const loaded = await gRes.json();
+                                        if (Array.isArray(loaded)) {
+                                            games = loaded;
+                                            try { localStorage.setItem('games_backup_tool', JSON.stringify(games)); } catch(e) {}
+                                            shouldRender = true;
+                                        }
+                                    } catch(e) {}
+                                }
+                            }
+                            if (ts.config !== serverTimestamps.config) {
+                                const cRes = await fetch('./config.json?t=' + Date.now());
+                                if (cRes.ok) { const loadedConfig = await cRes.json(); serverConfig = { ...DEFAULT_SERVER_CONFIG, ...loadedConfig }; applyConfig(); shouldRender = true; }
+                            }
+                            if (shouldRender) { renderGames(); renderFilters(); }
+                        }
+                    } else {
+                        serverTimestamps = ts;
+                    }
+                } catch(e) {}
+            }, 5000);
+
+            // 1分ごとに表示を更新して「何分前アクティブ」の時間を最新に保つ
+            setInterval(() => {
+                renderGames();
+            }, 60000);
+
+            // Chat polling (start after games are loaded)
+            fetchChat();
+            setInterval(fetchChat, 5000);
+            fetchShare();
+            setInterval(fetchShare, 5000);
+            document.addEventListener('visibilitychange', () => {
+                if (!document.hidden) {
+                    fetchChat();
+                    fetchShare();
+                }
+            });
+        }
+
+        function handleCategoryChange(select) {
+            const newInput = document.getElementById('game-category-new');
+            if (select.value === '__new__') {
+                newInput.style.display = 'block';
+                newInput.focus();
+            } else {
+                newInput.style.display = 'none';
+                newInput.value = '';
+            }
+        }
+
+        function toggleRanking() {
+            isRankingActive = !isRankingActive;
+            renderGames();
+            renderFilters();
+        }
+
+        async function fetchShare() {
+            try {
+                const res = await fetch('./share.json?t=' + Date.now());
+                if (res.ok) {
+                    const newMessages = await res.json();
+                    if (JSON.stringify(newMessages) !== JSON.stringify(shareMessages)) {
+                        // Remove notifications for deleted messages
+                        document.querySelectorAll('.chat-notification').forEach(notif => {
+                            if (notif.dataset.isShare !== 'true') return; // Skip chat notifications
+                            const ts = parseInt(notif.dataset.timestamp);
+                            const nName = notif.dataset.name;
+                            const nMsg = notif.dataset.messageText;
+                            if (ts && !newMessages.some(m =>
+                                (m.timestamp === ts) ||
+                                (m.name === nName && m.message === nMsg)
+                            )) {
+                                notif.classList.add('hiding');
+                                setTimeout(() => notif.remove(), 300);
+
+                                // Remove from cache
+                                let activeNotifs;
+                                try { activeNotifs = JSON.parse(localStorage.getItem('activeChatNotifs_tool') || '{}'); } catch(e) { activeNotifs = {}; }
+                                const notifId = notif.id ? notif.id.replace('notif-', '') : '';
+                                if (notifId) {
+                                    delete activeNotifs[notifId];
+                                    try { localStorage.setItem('activeChatNotifs_tool', JSON.stringify(activeNotifs)); } catch(e) {}
+                                }
+                            }
+                        });
+
+                        // Check for new messages from others
+                        if (initialShareLoaded) {
+                            const newItems = newMessages.filter(m => !shareMessages.some(old => old.id === m.id) && m.clientId !== myClientId);
+                            newItems.forEach(msg => {
+                                showChatNotification(msg, true);
+                            });
+                        } else {
+                            let dismissed;
+                            try { dismissed = JSON.parse(localStorage.getItem('dismissedShareNotifs') || '[]'); } catch(e) { dismissed = []; }
+                            if (!Array.isArray(dismissed)) dismissed = [];
+                            newMessages.forEach(msg => {
+                                if (msg.clientId !== myClientId && !dismissed.includes(msg.id)) {
+                                    showChatNotification(msg, true);
+                                }
+                            });
+                        }
+                        shareMessages = newMessages;
+                        initialShareLoaded = true;
+                        renderShare();
+                    } else {
+                        initialShareLoaded = true;
+                    }
+                }
+            } catch (e) {
+                console.error(e);
+            }
+        }
+
+        function renderShare() {
+            const container = document.getElementById('share-messages');
+            if (!container) return;
+            
+            if (shareMessages.length === 0) {
+                container.innerHTML = '<div style="text-align: center; color: #888; font-size: 13px; margin-top: 20px;">まだ投稿はありません</div>';
+                return;
+            }
+
+            let html = '';
+            shareMessages.forEach(msg => {
+                const timeStr = new Date(msg.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+                const msgKey = getMessageId(msg);
+                const name = msg.name || '名無しさん';
+                let gameHtml = '';
+                if (msg.gameId) {
+                    const game = games.find(g => g.id == msg.gameId);
+                    if (game) {
+                        gameHtml = `<div class="chat-message-game" onclick="App.openChatGame(${JSON.stringify(game.id)})">🎮 ${escapeHtml(game.name)}</div>`;
+                    }
+                }
+                
+                html += `
+                    <div class="chat-message-item" id="share-msg-${escapeHtml(msgKey)}">
+                        ${msg.replyTo ? `<div class="replied-message">
+                            <strong>@${escapeHtml(msg.replyTo.name)}</strong>&nbsp; ${escapeHtml(msg.replyTo.message)}
+                        </div>` : ''}
+                        <div class="chat-message-header" style="display: flex; justify-content: space-between; font-size: 11px; color: #888; margin-bottom: 3px; align-items: center;">
+                            <div>
+                                <span class="chat-message-name">${escapeHtml(name)}</span>
+                                
+                                <span>${timeStr}</span>
+                            </div>
+                            <button onclick="App.deleteShareMessage('${escapeInlineJs(msgKey)}')" title="削除" style="background: none; border: none; color: #ff5252; cursor: pointer; font-size: 14px; padding: 0 4px; opacity: 0.6;">×</button>
+                        </div>
+                        ${gameHtml}
+                        ${(() => { let msgText = msg.message || ''; if (msgText === '') return ''; if (msgText.toLowerCase().startsWith('/a')) { return `<div class="chat-message-text aa-font">${escapeHtml(msgText.replace(/^\/a(?:\r?\n| )?/i, ''))}</div>`; } return `<div class="chat-message-text">${escapeHtml(msgText)}</div>`; })()}
+                        ${msg.imageUrl ? `<div style="margin-top: 8px;"><img src="${escapeHtml(msg.imageUrl)}" onclick="App.openImageModal('${escapeHtml(msg.imageUrl)}')" style="max-width: 50%; border-radius: 8px; border: 1px solid rgba(128,128,128,0.2); cursor: zoom-in;" alt="Image"></div>` : ''}
+                        
+                        <div style="display: flex; gap: 4px; margin-top: 6px; flex-wrap: wrap;">
+                            ${Object.keys(msg.reactions || {}).map(emoji => {
+                                const clients = msg.reactions[emoji] || [];
+                                if (!Array.isArray(clients)) return '';
+                                const count = clients.length;
+                                const reacted = clients.includes(myClientId);
+                                if (count === 0) return '';
+                                return `<button class="reaction-btn ${reacted ? 'reacted' : ''}" onclick="App.reactMessage('${escapeInlineJs(emoji)}', ${msg.timestamp}, '${escapeInlineJs(msgKey)}', true)">${App.renderStampContent(emoji)} <span>${count}</span></button>`;
+                            }).join('')}
+                            <button class="add-reaction-btn reaction-btn" style="width: 24px; justify-content: center;" onclick="App.toggleReactionPicker(${msg.timestamp}, '${escapeInlineJs(msgKey)}', true, this, event)">+</button>
+                            <button class="reaction-btn" style="width: 24px; justify-content: center;" onclick="App.startReply(true, ${msg.timestamp}, '${escapeInlineJs(msgKey)}')" title="返信">↩</button>
+                        </div>
+                    </div>
+                `;
+            });
+            container.innerHTML = html;
+            container.scrollTop = container.scrollHeight;
+        }
+
+        async function deleteShareMessage(id) {
+            // Remove notification immediately
+            const msg = shareMessages.find(m => getMessageId(m) === String(id));
+            // 自分のメッセージのみ削除可能（他ユーザーのメッセージは削除不可）
+            if (msg && (!msg.clientId || msg.clientId !== myClientId)) return;
+            if (msg) {
+                document.querySelectorAll('.chat-notification').forEach(notif => {
+                    if (notif.dataset.isShare !== 'true') return;
+                    const ts = parseInt(notif.dataset.timestamp);
+                    const nName = notif.dataset.name;
+                    const nMsg = notif.dataset.messageText;
+                    if (ts === msg.timestamp || (msg.name === nName && msg.message === nMsg)) {
+                        notif.classList.add('hiding');
+                        setTimeout(() => notif.remove(), 300);
+                        let activeNotifs;
+                        try { activeNotifs = JSON.parse(localStorage.getItem('activeChatNotifs_tool') || '{}'); } catch(e) { activeNotifs = {}; }
+                        const notifId = notif.id ? notif.id.replace('notif-', '') : '';
+                        if (notifId) {
+                            delete activeNotifs[notifId];
+                            try { localStorage.setItem('activeChatNotifs_tool', JSON.stringify(activeNotifs)); } catch(e) {}
+                        }
+                    }
+                });
+            }
+
+            try {
+                const res = await fetch('./post_share.php', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: 'delete', id: id, timestamp: msg ? msg.timestamp : 0, clientId: myClientId })
+                });
+                if (res.ok) {
+                    fetchShare();
+                } else {
+                    showToast('削除失敗', 'error');
+                }
+            } catch(e) {
+                showToast('通信エラー', 'error');
+            }
+        }
+
+        let currentReactionMsgTs = 0;
+        let currentReactionMsgId = null;
+        let currentReactionIsShare = false;
+        
+        let currentReplyToChat = null;
+        let currentReplyToShare = null;
+
+        function startReply(isShare, timestamp, msgId) {
+            const msgs = isShare ? shareMessages : chatMessages;
+            // msgId（一意キー）があればそれを優先。無い場合はtimestampで検索（互換性）
+            const msg = msgId
+                ? msgs.find(m => getMessageId(m) === msgId)
+                : msgs.find(m => m.timestamp === timestamp);
+            if (!msg) return;
+            const name = msg.name;
+            const messageText = msg.message || '';
+            const messageSnippet = messageText.length > 30 ? messageText.substring(0, 30) + '...' : messageText;
+            
+            const replyObj = { timestamp, name, message: messageSnippet.replace(/\n/g, " ") };
+            if (isShare) {
+                currentReplyToShare = replyObj;
+                document.getElementById('share-reply-preview').style.display = 'flex';
+                document.getElementById('share-reply-name').textContent = name;
+                document.getElementById('share-reply-text').textContent = replyObj.message;
+                document.getElementById('share-message').focus();
+            } else {
+                currentReplyToChat = replyObj;
+                document.getElementById('chat-reply-preview').style.display = 'flex';
+                document.getElementById('chat-reply-name').textContent = name;
+                document.getElementById('chat-reply-text').textContent = replyObj.message;
+                document.getElementById('chat-message').focus();
+            }
+        }
+
+        function cancelReply(isShare) {
+            if (isShare) {
+                currentReplyToShare = null;
+                document.getElementById('share-reply-preview').style.display = 'none';
+            } else {
+                currentReplyToChat = null;
+                document.getElementById('chat-reply-preview').style.display = 'none';
+            }
+        }
+
+        function toggleReactionPicker(timestamp, msgId, isShare, btnElem, event) {
+            event.stopPropagation();
+            const picker = document.getElementById('reaction-picker');
+            if (picker.style.display === 'flex' && currentReactionMsgId === msgId && currentReactionIsShare === isShare) {
+                picker.style.display = 'none';
+                return;
+            }
+            currentReactionMsgTs = timestamp;
+            currentReactionMsgId = msgId;
+            currentReactionIsShare = isShare;
+            picker.style.display = 'flex';
+            const rect = btnElem.getBoundingClientRect();
+            picker.style.top = (rect.bottom + 5) + 'px';
+            picker.style.left = Math.min(rect.left, window.innerWidth - 180) + 'px';
+        }
+
+        async function reactMessage(emoji, explicitTs = null, explicitMsgId = null, explicitIsShare = null) {
+            const timestamp = explicitTs !== null ? explicitTs : currentReactionMsgTs;
+            const msgId = explicitMsgId !== null ? explicitMsgId : currentReactionMsgId;
+            const isShare = explicitIsShare !== null ? explicitIsShare : currentReactionIsShare;
+
+            document.getElementById('reaction-picker').style.display = 'none';
+            if (!timestamp) return;
+
+            try {
+                const endpoint = isShare ? './post_share.php' : './post_chat.php';
+                const payload = { action: 'react', timestamp: timestamp, emoji: emoji, clientId: myClientId };
+                // 一意なmsgId（idまたはtimestamp+clientIdの合成キー）があれば併送して
+                // 同一秒の複数メッセージ間での誤反応を防ぐ
+                if (msgId) payload.msgId = msgId;
+                const res = await fetch(endpoint, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                if (res.ok) {
+                    if (isShare) fetchShare(); else fetchChat();
+                } else {
+                    showToast('リアクションに失敗しました', 'error');
+                }
+            } catch(e) {
+                console.error(e);
+            }
+        }
+
+        // Close picker when clicking outside
+        window.addEventListener('click', e => {
+            const picker = document.getElementById('reaction-picker');
+            if (picker && picker.style.display !== 'none' && !e.target.closest('#reaction-picker') && !e.target.closest('.add-reaction-btn')) {
+                picker.style.display = 'none';
+            }
+        });
+
+        async function deleteChatMessage(id) {
+            // Remove notification immediately
+            const msg = chatMessages.find(m => getMessageId(m) === String(id));
+            // 自分のメッセージのみ削除可能（他ユーザーのメッセージは削除不可）
+            if (msg && (!msg.clientId || msg.clientId !== myClientId)) return;
+            if (msg) {
+                document.querySelectorAll('.chat-notification').forEach(notif => {
+                    if (notif.dataset.isShare === 'true') return;
+                    const ts = parseInt(notif.dataset.timestamp);
+                    const nName = notif.dataset.name;
+                    const nMsg = notif.dataset.messageText;
+                    if (ts === msg.timestamp || (msg.name === nName && msg.message === nMsg)) {
+                        notif.classList.add('hiding');
+                        setTimeout(() => notif.remove(), 300);
+                        let activeNotifs;
+                        try { activeNotifs = JSON.parse(localStorage.getItem('activeChatNotifs_tool') || '{}'); } catch(e) { activeNotifs = {}; }
+                        const notifId = notif.id ? notif.id.replace('notif-', '') : '';
+                        if (notifId) {
+                            delete activeNotifs[notifId];
+                            try { localStorage.setItem('activeChatNotifs_tool', JSON.stringify(activeNotifs)); } catch(e) {}
+                        }
+                    }
+                });
+            }
+
+            try {
+                const res = await fetch('./post_chat.php', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: 'delete', id: id, timestamp: msg ? msg.timestamp : 0, clientId: myClientId })
+                });
+                if (res.ok) {
+                    fetchChat();
+                } else {
+                    showToast('削除失敗', 'error');
+                }
+            } catch(e) {
+                showToast('通信エラー', 'error');
+            }
+        }
+
+        // 送信失敗時のローカル最適更新のロールバック
+        function rollbackChatMessage(tempMsg) {
+            chatMessages = chatMessages.filter(m => m.id !== tempMsg.id);
+            renderChat();
+        }
+
+        function openShare() {
+            document.getElementById('share-name').value = document.getElementById('chat-name').value || localStorage.getItem('chat_name') || '';
+            
+            const shareSelect = document.getElementById('share-game-select');
+            let options = '<option value="">ツール指定なし</option>';
+            games.forEach(g => {
+                options += `<option value="${g.id}">${escapeHtml(g.name)}</option>`;
+            });
+            shareSelect.innerHTML = options;
+            
+            document.getElementById('share-message').value = '';
+            clearShareImage();
+            document.getElementById('share-sidebar').classList.add('active');
+            document.body.classList.add('chat-open');
+        }
+
+        function closeShare() {
+            document.getElementById('share-sidebar').classList.remove('active');
+            document.body.classList.remove('chat-open');
+        }
+
+        function openImageModal(url) {
+            const modal = document.getElementById('image-modal');
+            const img = document.getElementById('image-modal-img');
+            if (!modal || !img) return;
+            img.src = url;
+            // opacityトランジションが無いため、displayのみで表示/非表示する（閉じきりの不具合回避）
+            modal.style.display = 'flex';
+        }
+
+        function closeImageModal() {
+            const modal = document.getElementById('image-modal');
+            const img = document.getElementById('image-modal-img');
+            if (!modal) return;
+            modal.style.display = 'none';
+            if (img) img.src = '';
+        }
+        
+        function handleShareImageSelect() {
+            const input = document.getElementById('share-image');
+            if(input.files && input.files[0]){
+                const r = new FileReader();
+                r.onload = e => {
+                    document.getElementById('share-image-preview-img').src = e.target.result;
+                    document.getElementById('share-image-preview-container').style.display = 'block';
+                };
+                r.readAsDataURL(input.files[0]);
+            }
+        }
+        
+        function clearShareImage() {
+            document.getElementById('share-image').value = '';
+            document.getElementById('share-image-preview-container').style.display = 'none';
+        }
+        
+        function setupShareDragAndDrop() {
+            const dropZone = document.getElementById('share-sidebar');
+            const fileInput = document.getElementById('share-image');
+            if(!dropZone || !fileInput) return;
+            dropZone.addEventListener('dragover', e => {
+                e.preventDefault();
+                dropZone.classList.add('drag-over');
+            });
+            dropZone.addEventListener('dragleave', e => {
+                e.preventDefault();
+                dropZone.classList.remove('drag-over');
+            });
+            dropZone.addEventListener('drop', e => {
+                e.preventDefault();
+                dropZone.classList.remove('drag-over');
+                if(e.dataTransfer.files && e.dataTransfer.files[0]) {
+                    if(e.dataTransfer.files[0].type.startsWith('image/')) {
+                        fileInput.files = e.dataTransfer.files;
+                        handleShareImageSelect();
+                    }
+                }
+            });
+            
+            // Clipboard Paste Support
+            window.addEventListener('paste', e => {
+                if (!dropZone.classList.contains('active')) return;
+                
+                if (e.clipboardData && e.clipboardData.items) {
+                    for (let i = 0; i < e.clipboardData.items.length; i++) {
+                        if (e.clipboardData.items[i].type.startsWith('image/')) {
+                            const file = e.clipboardData.items[i].getAsFile();
+                            if (file) {
+                                const dataTransfer = new DataTransfer();
+                                dataTransfer.items.add(file);
+                                fileInput.files = dataTransfer.files;
+                                handleShareImageSelect();
+                                e.preventDefault();
+                                break;
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        async function submitShare() {
+            const nameInput = document.getElementById('share-name');
+            const messageInput = document.getElementById('share-message');
+            const imageInput = document.getElementById('share-image');
+            const gameSelect = document.getElementById('share-game-select');
+            const btn = document.getElementById('share-submit-btn');
+            
+            const name = nameInput.value.trim() || '名無しさん';
+            const message = messageInput.value.trim();
+            const file = imageInput.files[0];
+            const gameId = gameSelect.value ? parseInt(gameSelect.value, 10) : null;
+            
+            if (!message && !file) {
+                showToast('メッセージまたは画像を入力してください', 'error');
+                return;
+            }
+            if (message.length > 300) {
+                showToast('最大300文字です', 'error');
+                return;
+            }
+            
+            btn.disabled = true;
+            btn.innerText = '送信中...';
+            
+            // Optimistic update
+            const tempMsg = {
+                id: 'temp_share_' + Date.now(),
+                name: name,
+                message: message,
+                gameId: gameId,
+                timestamp: Date.now(),
+                clientId: myClientId,
+                imageUrl: file ? URL.createObjectURL(file) : null,
+                replyTo: currentReplyToShare
+            };
+            shareMessages.push(tempMsg);
+            renderShare();
+            
+            const formData = new FormData();
+            formData.append('name', name);
+            formData.append('message', message);
+            formData.append('clientId', myClientId);
+            formData.append('isShare', 'true');
+            if (currentReplyToShare) formData.append('replyTo', JSON.stringify(currentReplyToShare));
+            if (gameId) formData.append('gameId', gameId);
+            if (file) {
+                formData.append('image', file);
+            }
+            cancelReply(true);
+            
+            try {
+                const response = await fetch('post_share.php', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const data = await response.json();
+                
+                if (data.status === 'success') {
+                    showChatNotification(tempMsg, true);
+                    localStorage.setItem('chat_name', name);
+                    document.getElementById('share-name').value = name;
+                    const msgInput = document.getElementById('share-message');
+                    if (msgInput) {
+                        msgInput.value = '';
+                        msgInput.style.height = 'auto';
+                    }
+                    clearShareImage();
+                    
+                    fetchShare();
+                } else {
+                    showToast('エラー: ' + data.message, 'error');
+                }
+            } catch (e) {
+                showToast('通信エラー', 'error');
+            } finally {
+                btn.disabled = false;
+                btn.innerText = '投稿する';
+            }
+        }
+
+        return {
+            init,
+            openGameModal, closeGameModal, saveGame, deleteGame, deleteCategory,
+            openSettings, closeSettings, saveSettings, exportData, importData, handleGridSizeChange,
+            setCategory, handleCategoryChange, togglePin, toggleRanking,
+            handleCategoryDragStart, handleCategoryDragOver, handleCategoryDrop, handleCategoryDragEnd,
+            openChat, closeChat, sendChatMessage, openChatGame, deleteChatMessage,
+            loadServerBackups, createServerBackup, restoreServerBackup, deleteServerBackup,
+            openShare, closeShare, submitShare, handleShareImageSelect, clearShareImage, deleteShareMessage,
+            openImageModal, closeImageModal,
+            toggleReactionPicker, reactMessage,
+            startReply, cancelReply,
+            addCustomStamp, deleteCustomStamp, addCustomImageStamp, renderStampContent
+        };
+    })();
+
+    document.addEventListener('DOMContentLoaded', () => {
+        App.init();
+
+        // マウスホイールで横スクロールできるようにする
+        const filters = document.querySelectorAll('.category-filter');
+        filters.forEach(ele => {
+            ele.addEventListener('wheel', (e) => {
+                if (e.deltaY !== 0) {
+                    e.preventDefault();
+                    ele.scrollLeft += e.deltaY;
+                }
+            }, { passive: false });
+        });
+    });

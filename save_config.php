@@ -1,6 +1,6 @@
 <?php
 /**
- * Tool Launcher Pro - Config Save Endpoint (Fixed)
+ * Web Game Launcher Pro - Config Save Endpoint (Fixed)
  */
 
 ini_set('display_errors', 0);
@@ -32,23 +32,44 @@ $rate_limit_window = 60;
 $rate_limit_max = 20;
 $client_ip = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
 
+// H4: read + count + append happen inside a single flock, and every call
+// prunes ALL stale keys so the file does not grow unbounded.
 function checkRateLimit($file, $ip, $window, $max) {
-    $data = [];
-    if (file_exists($file)) {
-        $raw = file_get_contents($file);
-        $data = json_decode($raw, true) ?: [];
+    $fp = @fopen($file, 'c');
+    if ($fp === false) {
+        return true;
+    }
+    if (!flock($fp, LOCK_EX)) {
+        fclose($fp);
+        return true;
+    }
+    $raw = stream_get_contents($fp);
+    $data = $raw !== false && $raw !== '' ? (json_decode($raw, true) ?: []) : [];
+    if (!is_array($data)) {
+        $data = [];
     }
     $now = time();
-    $key = md5($ip);
-    if (isset($data[$key])) {
-        $data[$key] = array_filter($data[$key], function($t) use ($now, $window) {
-            return ($now - $t) < $window;
-        });
-        if (count($data[$key]) >= $max) return false;
+    // Prune every key (all stale keys on every call)
+    foreach (array_keys($data) as $k) {
+        $data[$k] = array_values(array_filter((array)$data[$k], function($t) use ($now, $window) {
+            return is_int($t) && ($now - $t) < $window;
+        }));
+        if (empty($data[$k])) {
+            unset($data[$k]);
+        }
     }
-    $data[$key][] = $now;
-    file_put_contents($file, json_encode($data), LOCK_EX);
-    return true;
+    $key = md5($ip);
+    $allowed = isset($data[$key]) ? count($data[$key]) < $max : true;
+    if ($allowed) {
+        $data[$key][] = $now;
+        ftruncate($fp, 0);
+        rewind($fp);
+        fwrite($fp, json_encode($data));
+    }
+    fflush($fp);
+    flock($fp, LOCK_UN);
+    fclose($fp);
+    return $allowed;
 }
 
 if (!checkRateLimit($rate_limit_file, $client_ip, $rate_limit_window, $rate_limit_max)) {
@@ -104,40 +125,43 @@ foreach ($decoded as $key => $value) {
             $validated[$key] = filter_var($value, FILTER_VALIDATE_BOOLEAN);
             break;
         case 'accentColor':
-            $color = ltrim(trim((string)$value), '#');
-            $validated[$key] = preg_match('/^[0-9A-Fa-f]{6}$/', $color) ? '#' . strtolower($color) : '#00e6e6'; 
+            $color = is_string($value) ? ltrim(trim($value), '#') : '';
+            $validated[$key] = preg_match('/^[0-9A-Fa-f]{6}$/', $color) ? '#' . strtolower($color) : '#00e6e6';
             break;
         case 'bgImage':
-            $url = trim((string)$value);
+            $url = is_string($value) ? trim($value) : '';
             $validated[$key] = (empty($url) || filter_var($url, FILTER_VALIDATE_URL)) ? $url : '';
             break;
         case 'gridSize':
         case 'borderRadius':
         case 'cardGap':
-            // キーごとにデフォルト値を使い分ける（全て240pxでは意図しない表示になる）
-            $default_size = $key === 'borderRadius' ? '8px' : ($key === 'cardGap' ? '20px' : '240px');
-            $validated[$key] = preg_replace('/[^0-9px]/', '', trim((string)$value)) ?: $default_size;
+            $validated[$key] = preg_replace('/[^0-9px]/', '', is_string($value) ? trim($value) : '') ?: '240px';
             break;
         case 'clockFormat':
             $validated[$key] = in_array($value, ['12h', '24h'], true) ? $value : '24h';
             break;
         case 'categoryOrder':
             if (is_array($value)) {
-                // 生データとして保存（エスケープは描画時に行う）。
-                // htmlspecialcharsすると &amp; 等が二重エンコードされるため
+                // M13: filter out non-scalar entries, then store raw strings
+                // (no htmlspecialchars) so that clients which receive the
+                // config via JSON can escape on render.
+                $order = array_values(array_filter(array_values($value), 'is_scalar'));
                 $validated[$key] = array_map(function($v) {
-                    return is_string($v) ? mb_substr(trim($v), 0, 50, 'UTF-8') : (string)$v;
-                }, $value);
+                    return mb_substr((string)$v, 0, 50, 'UTF-8');
+                }, $order);
             }
             break;
         default:
-            $validated[$key] = is_string($value) ? trim($value) : $value;
+            // M6: guard with is_string before trim so a non-scalar value
+            // never triggers a PHP 8 TypeError.
+            if (is_string($value)) {
+                $validated[$key] = htmlspecialchars(trim($value), ENT_QUOTES, 'UTF-8');
+            } elseif (is_scalar($value)) {
+                $validated[$key] = $value;
+            }
+            // non-scalar (array/object) is silently dropped
     }
 }
-
-// 文字列でない値にtrim()が渡されるとPHP8でTypeErrorになるため、
-// 上記switchでtrimする前にis_string()ガードで保護する（accentColor/bgImage/gridSize等の
-// trim((string)$value)はキャスト済みなので問題ない）
 
 // Try backup (non-critical)
 $backup_success = false;
@@ -167,19 +191,16 @@ if ($json_output === false) {
     exit;
 }
 
-// 原子的な書き込み（一時ファイル + rename）で途中破損を防止
+// Atomic write: temp file + rename so a failed write never leaves a
+// truncated/partial config.json behind.
 $tmp_path = $file_path . '.' . getmypid() . '.tmp';
 $result = @file_put_contents($tmp_path, $json_output, LOCK_EX);
 if ($result !== false) {
-    if (@rename($tmp_path, $file_path)) {
-        $result = true;
-    } else {
-        // renameが失敗した場合（例: 別パーティション）は通常の方法にフォールバック
-        $result = @file_put_contents($file_path, $json_output, LOCK_EX);
+    if (!@rename($tmp_path, $file_path)) {
         @unlink($tmp_path);
+        $result = false;
     }
 }
-@unlink($tmp_path);
 if ($result !== false) {
     @chmod($file_path, 0666);
     $response["status"] = "success";

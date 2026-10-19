@@ -1168,7 +1168,7 @@
                         </select>
                     </div>
                     <div class="form-group" style="flex: 1;">
-                        <label for="setting-カードの隙間">カードの隙間</label>
+                        <label for="setting-card-gap">カードの隙間</label>
                         <select id="setting-card-gap">
                             <option value="10px">狭い (10px)</option>
                             <option value="20px">標準 (20px)</option>
@@ -2474,8 +2474,14 @@
         }
 
         // === 起動時に順番を入れ替える（ピン留め以外） ===
-        function launchGame(game) {
+        async function launchGame(game) {
             if (!game.url) return;
+            // M18: persist counters to the server before navigating away,
+            // otherwise the in-flight fetch is aborted mid-flight and the
+            // playCount/activeUsers updates are lost.
+            try {
+                await saveGamesToServer();
+            } catch(e) {}
             // window.openの'_self'はnoopenerオプションを無視する（referrer漏洩対策）ため、
             // 同一タブで開く場合はlocation.hrefで直接遷移する
             if (localConfig.openInNewTab) {
@@ -2483,7 +2489,7 @@
             } else {
                 window.location.href = game.url;
             }
-            
+
             // 個人の既読時刻を記録
             setReadHistoryEntry(game.id, Date.now());
 
@@ -2808,9 +2814,11 @@
 
         function deleteGame(id) {
             if (!confirm('このツールを削除しますか？')) return;
-            const game = games.find(g => g.id == id);
+            const game = games.find(g => String(g.id) === String(id));
             if (game) {
-                games = games.filter(g => g.id !== id);
+                // H3: strict string comparison so a numeric/string id mismatch
+                // can never leave the game behind.
+                games = games.filter(g => String(g.id) !== String(id));
                 renderGames();
                 renderFilters();
                 closeGameModal();
@@ -2946,10 +2954,17 @@
         function applyConfig() {
             const root = document.documentElement;
 
+            // M12: validate accentColor is a proper 6-digit hex; fall back
+            // to the default accent if it is not.
+            const accentColor = (typeof localConfig.accentColor === 'string'
+                && /^#[0-9A-Fa-f]{6}$/.test(localConfig.accentColor))
+                ? localConfig.accentColor
+                : '#00e6e6';
+
             // Apply Local Config
             root.style.setProperty('--grid-min-width', localConfig.gridSize);
-            root.style.setProperty('--focus-color', localConfig.accentColor);
-            root.style.setProperty('--focus-color-rgb', hexToRgb(localConfig.accentColor));
+            root.style.setProperty('--focus-color', accentColor);
+            root.style.setProperty('--focus-color-rgb', hexToRgb(accentColor));
             root.style.setProperty('--card-radius', localConfig.borderRadius);
             root.style.setProperty('--grid-gap', localConfig.cardGap);
             root.style.setProperty('--hover-scale', localConfig.enableAnimations ? '1.04' : '1.0');
@@ -3600,11 +3615,11 @@
         async function deleteShareMessage(id) {
             // Remove notification immediately
             const msg = shareMessages.find(m => getMessageId(m) === String(id));
-            // 自分のメッセージのみ削除可能（他ユーザーのメッセージは削除不可）
-            if (msg && (!msg.clientId || msg.clientId !== myClientId)) return;
-            if (msg) {
-                document.querySelectorAll('.chat-notification').forEach(notif => {
-                    if (notif.dataset.isShare !== 'true') return;
+            // M15: default-deny — the message must exist and belong to this
+            // client before anything is sent.
+            if (!msg || !msg.clientId || msg.clientId !== myClientId) return;
+            document.querySelectorAll('.chat-notification').forEach(notif => {
+                if (notif.dataset.isShare !== 'true') return;
                     const ts = parseInt(notif.dataset.timestamp);
                     const nName = notif.dataset.name;
                     const nMsg = notif.dataset.messageText;
@@ -3619,8 +3634,7 @@
                             try { localStorage.setItem('activeChatNotifs_tool', JSON.stringify(activeNotifs)); } catch(e) {}
                         }
                     }
-                });
-            }
+            });
 
             try {
                 const res = await fetch('./post_share.php', {
@@ -3738,11 +3752,11 @@
         async function deleteChatMessage(id) {
             // Remove notification immediately
             const msg = chatMessages.find(m => getMessageId(m) === String(id));
-            // 自分のメッセージのみ削除可能（他ユーザーのメッセージは削除不可）
-            if (msg && (!msg.clientId || msg.clientId !== myClientId)) return;
-            if (msg) {
-                document.querySelectorAll('.chat-notification').forEach(notif => {
-                    if (notif.dataset.isShare === 'true') return;
+            // M15: default-deny — the message must exist and belong to this
+            // client before anything is sent.
+            if (!msg || !msg.clientId || msg.clientId !== myClientId) return;
+            document.querySelectorAll('.chat-notification').forEach(notif => {
+                if (notif.dataset.isShare === 'true') return;
                     const ts = parseInt(notif.dataset.timestamp);
                     const nName = notif.dataset.name;
                     const nMsg = notif.dataset.messageText;
@@ -3757,8 +3771,7 @@
                             try { localStorage.setItem('activeChatNotifs_tool', JSON.stringify(activeNotifs)); } catch(e) {}
                         }
                     }
-                });
-            }
+            });
 
             try {
                 const res = await fetch('./post_chat.php', {

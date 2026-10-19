@@ -1,6 +1,6 @@
 <?php
 /**
- * Tool Launcher Pro - Game Data Save Endpoint (Fixed)
+ * Web Game Launcher Pro - Game Data Save Endpoint (Fixed)
  */
 
 ini_set('display_errors', 0);
@@ -33,23 +33,44 @@ $rate_limit_window = 60;
 $rate_limit_max = 30;
 $client_ip = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
 
+// H4: read + count + append happen inside a single flock, and every call
+// prunes ALL stale keys so the file does not grow unbounded.
 function checkRateLimit($file, $ip, $window, $max) {
-    $data = [];
-    if (file_exists($file)) {
-        $raw = file_get_contents($file);
-        $data = json_decode($raw, true) ?: [];
+    $fp = @fopen($file, 'c');
+    if ($fp === false) {
+        return true;
+    }
+    if (!flock($fp, LOCK_EX)) {
+        fclose($fp);
+        return true;
+    }
+    $raw = stream_get_contents($fp);
+    $data = $raw !== false && $raw !== '' ? (json_decode($raw, true) ?: []) : [];
+    if (!is_array($data)) {
+        $data = [];
     }
     $now = time();
-    $key = md5($ip);
-    if (isset($data[$key])) {
-        $data[$key] = array_filter($data[$key], function($t) use ($now, $window) {
-            return ($now - $t) < $window;
-        });
-        if (count($data[$key]) >= $max) return false;
+    // Prune every key (all stale keys on every call)
+    foreach (array_keys($data) as $k) {
+        $data[$k] = array_values(array_filter((array)$data[$k], function($t) use ($now, $window) {
+            return is_int($t) && ($now - $t) < $window;
+        }));
+        if (empty($data[$k])) {
+            unset($data[$k]);
+        }
     }
-    $data[$key][] = $now;
-    file_put_contents($file, json_encode($data), LOCK_EX);
-    return true;
+    $key = md5($ip);
+    $allowed = isset($data[$key]) ? count($data[$key]) < $max : true;
+    if ($allowed) {
+        $data[$key][] = $now;
+        ftruncate($fp, 0);
+        rewind($fp);
+        fwrite($fp, json_encode($data));
+    }
+    fflush($fp);
+    flock($fp, LOCK_UN);
+    fclose($fp);
+    return $allowed;
 }
 
 if (!checkRateLimit($rate_limit_file, $client_ip, $rate_limit_window, $rate_limit_max)) {
@@ -81,19 +102,20 @@ if ($decoded === null && strtolower(trim($json_data)) !== 'null') {
 }
 
 if (!is_array($decoded)) {
-    $response["message"] = "ツールデータは配列である必要があります";
+    $response["message"] = "ゲームデータは配列である必要があります";
     echo json_encode($response, JSON_UNESCAPED_UNICODE);
     exit;
 }
 
 if (count($decoded) > $max_games) {
-    $response["message"] = "ツール数が上限（{$max_games}件）を超えています";
+    $response["message"] = "ゲーム数が上限（{$max_games}件）を超えています";
     echo json_encode($response, JSON_UNESCAPED_UNICODE);
     exit;
 }
 
+// M16: use 'c' mode so opening the lock file does not truncate it
 $lock_file = __DIR__ . '/games.lock';
-$fp_lock = fopen($lock_file, 'w');
+$fp_lock = fopen($lock_file, 'c');
 
 if ($fp_lock && flock($fp_lock, LOCK_EX)) {
     // --- Start of Active User Merge Logic ---
@@ -115,6 +137,7 @@ if ($fp_lock && flock($fp_lock, LOCK_EX)) {
     // Validate each game entry
     $required_fields = ['id', 'name', 'url'];
     $validated = [];
+    $seen_ids = []; // duplicate id detection
     foreach ($decoded as $index => $game) {
         if (!is_array($game)) {
             $response["message"] = "インデックス {$index} のデータが不正です";
@@ -125,7 +148,7 @@ if ($fp_lock && flock($fp_lock, LOCK_EX)) {
         }
 
         foreach ($required_fields as $field) {
-            if (!isset($game[$field]) || (is_string($game[$field]) && trim($game[$field]) === '')) {
+            if (!isset($game[$field]) || (is_scalar($game[$field]) && trim((string)$game[$field]) === '')) {
                 $response["message"] = "インデックス {$index} の {$field} が不正です";
                 echo json_encode($response, JSON_UNESCAPED_UNICODE);
                 flock($fp_lock, LOCK_UN);
@@ -134,25 +157,58 @@ if ($fp_lock && flock($fp_lock, LOCK_EX)) {
             }
         }
 
-        // IDは文字列として保持（Date.now()等の大きな数値が32bitに切り詰められないようにする）
-        $game_id = $game['id'];
-        if (is_numeric($game_id)) {
-            $game_id = (string)intval($game_id);
-        } else {
-            $game_id = trim((string)$game_id);
-        }
-        if ($game_id === '') {
-            $response["message"] = "インデックス {$index} の id が不正です";
+        // Reject non-numeric ids: string ids must fully match /^\d+$/ before
+        // being cast to int (prevents e.g. "abc12" being silently coerced).
+        if (is_string($game['id']) && !preg_match('/^\d+$/', $game['id'])) {
+            $response["message"] = "インデックス {$index} の id が不正です（数字のみ許可）";
             echo json_encode($response, JSON_UNESCAPED_UNICODE);
             flock($fp_lock, LOCK_UN);
             fclose($fp_lock);
             exit;
         }
-        
-        // 既存のサーバー側データを取得（IDは文字列で厳密比較）
+        $game_id = is_int($game['id']) ? $game['id'] : intval($game['id']);
+
+        // Duplicate id detection: reject the entire payload if an id appears twice
+        if (isset($seen_ids[$game_id])) {
+            $response["message"] = "重複するゲームIDが検出されました（ID: {$game_id}）。保存を拒否しました。";
+            echo json_encode($response, JSON_UNESCAPED_UNICODE);
+            flock($fp_lock, LOCK_UN);
+            fclose($fp_lock);
+            exit;
+        }
+        $seen_ids[$game_id] = true;
+
+        // URL sanity check: reject non-URL schemes such as javascript:/data:/vbscript:/file:
+        // (FILTER_VALIDATE_URL allows "javascript:alert(1)" which has no "://")
+        $raw_url = is_string($game['url']) ? trim($game['url']) : '';
+        if (preg_match('/^[a-z][a-z0-9+.-]*:/i', $raw_url)) {
+            $scheme = strtolower((string)preg_replace('/^([a-z][a-z0-9+.-]*):.*$/i', '$1', $raw_url));
+            if (in_array($scheme, ['javascript', 'data', 'vbscript', 'file'], true)) {
+                $response["message"] = "インデックス {$index} の url が許可されていないスキームです";
+                echo json_encode($response, JSON_UNESCAPED_UNICODE);
+                flock($fp_lock, LOCK_UN);
+                fclose($fp_lock);
+                exit;
+            }
+        }
+
+        // Image sanity check: same scheme rejection as url (javascript:/data:/vbscript:/file:)
+        $raw_image = isset($game['image']) ? trim((string)$game['image']) : '';
+        if ($raw_image !== '' && preg_match('/^[a-z][a-z0-9+.-]*:/i', $raw_image)) {
+            $img_scheme = strtolower((string)preg_replace('/^([a-z][a-z0-9+.-]*):.*$/i', '$1', $raw_image));
+            if (in_array($img_scheme, ['javascript', 'data', 'vbscript', 'file'], true)) {
+                $response["message"] = "インデックス {$index} の image が許可されていないスキームです";
+                echo json_encode($response, JSON_UNESCAPED_UNICODE);
+                flock($fp_lock, LOCK_UN);
+                fclose($fp_lock);
+                exit;
+            }
+        }
+
+        // 既存のサーバー側データを取得
         $server_game = null;
         foreach ($existing_games as $ex_g) {
-            if (isset($ex_g['id']) && (string)$ex_g['id'] === $game_id) {
+            if (isset($ex_g['id']) && $ex_g['id'] === $game_id) {
                 $server_game = $ex_g;
                 break;
             }
@@ -161,14 +217,16 @@ if ($fp_lock && flock($fp_lock, LOCK_EX)) {
         // タイムスタンプの比較（ミリ秒）
         $client_updated_at = isset($game['updatedAt']) ? intval($game['updatedAt']) : 0;
         $server_updated_at = $server_game && isset($server_game['updatedAt']) ? intval($server_game['updatedAt']) : 0;
-        
-        // クライアントが古い場合はサーバーのメタデータを優先する
-        $is_outdated = ($server_game && $client_updated_at < $server_updated_at);
+
+        // クライアントが古い場合はサーバーのメタデータを優先する。
+        // ただし client_updated_at が 0（未送信）の新しいゲームは
+        // 古いデータとみなさず、クライアントの値を使う。
+        $is_outdated = ($server_game && $client_updated_at > 0 && $client_updated_at < $server_updated_at);
 
         // アクティブユーザーのマージ処理
         $new_active = isset($game['activeUsers']) && is_array($game['activeUsers']) ? $game['activeUsers'] : [];
         $merged_active = $new_active;
-        
+
         if ($server_game && isset($server_game['activeUsers']) && is_array($server_game['activeUsers'])) {
             foreach ($server_game['activeUsers'] as $uid => $ts) {
                 if (!isset($merged_active[$uid]) || $ts > $merged_active[$uid]) {
@@ -176,7 +234,7 @@ if ($fp_lock && flock($fp_lock, LOCK_EX)) {
                 }
             }
         }
-        
+
         // ついでにサーバー側でも1時間以上前の古いデータを掃除
         $merged_active = array_filter($merged_active, function($ts) use ($one_hour_ago_ms) {
             return $ts > $one_hour_ago_ms;
@@ -187,47 +245,75 @@ if ($fp_lock && flock($fp_lock, LOCK_EX)) {
         $server_last_played = $server_game && isset($server_game['lastPlayed']) ? intval($server_game['lastPlayed']) : 0;
         $merged_last_played = max($client_last_played, $server_last_played);
 
-        // playCountの採用（新しい方を採用するか、足し合わせるか？基本的にサーバー側の数値をベースにするのが安全だが、今回は新しい方を採用）
+        // playCountの採用（新しい方を採用）
         $client_play_count = isset($game['playCount']) ? intval($game['playCount']) : 0;
         $server_play_count = $server_game && isset($server_game['playCount']) ? intval($server_game['playCount']) : 0;
         $merged_play_count = max($client_play_count, $server_play_count);
 
-        // URL検証: 絶対URLのみ構文チェック。相対パスやuploads/等の内部パスはそのまま許可
-        $clean_url = $is_outdated ? $server_game['url'] : trim((string)$game['url']);
-        if (!$is_outdated) {
-            $has_scheme = strpos($clean_url, '://') !== false;
-            $is_http = preg_match('#^https?://#i', $clean_url);
-            $has_traversal = preg_match('#(^|/)\.\.(/|$)#', $clean_url);
-            // javascript:/data:/vbscript:/file: 等の危険なスキームを明示的に拒否
-            $has_dangerous_scheme = preg_match('#^(javascript|data|vbscript|file):#i', trim((string)$game['url']));
-            if (($has_scheme && !$is_http)
-                || $has_dangerous_scheme
-                || ($is_http && !filter_var($clean_url, FILTER_VALIDATE_URL))
-                || $has_traversal) {
-                // パストラバーサル不可 / http・https以外のスキーム拒否 / 絶対URLは構文チェック
-                $clean_url = '';
-            }
+        // M7: read every server-side field with ?? defaults so a missing
+        // key never throws a PHP warning/notice on this path.
+        $s_name = $server_game['name'] ?? '';
+        $s_url = $server_game['url'] ?? '';
+        $s_image = $server_game['image'] ?? '';
+        $s_category = $server_game['category'] ?? '';
+        $s_players_min = $server_game['playersMin'] ?? 0;
+        $s_players_max = $server_game['playersMax'] ?? 0;
+        $s_created_at = $server_game['createdAt'] ?? (time() * 1000);
+        $s_has_update = $server_game['hasUpdate'] ?? false;
+        $s_remote_updated_at = $server_game['remoteUpdatedAt'] ?? 0;
+        $s_last_hash = $server_game['lastHash'] ?? '';
+        $s_is_pinned = $server_game['isPinned'] ?? false;
+        $s_creator = $server_game['creator'] ?? '';
+
+        // クライアントが古い（$is_outdated）場合はユーザー編集可能フィールドを
+        // すべてサーバー側の値で置き換える。マージするのは lastPlayed /
+        // playCount / activeUsers のみ。
+        if ($is_outdated) {
+            $out_name = mb_substr((string)$s_name, 0, 100, 'UTF-8');
+            $out_url = (filter_var((string)$s_url, FILTER_VALIDATE_URL) ?: '');
+            $out_image = (string)$s_image;
+            $out_category = mb_substr((string)$s_category, 0, 50, 'UTF-8');
+            $out_players_min = max(0, intval($s_players_min));
+            $out_players_max = max(0, intval($s_players_max));
+            $out_created_at = intval($s_created_at);
+            $out_has_update = filter_var($s_has_update, FILTER_VALIDATE_BOOLEAN);
+            $out_remote_updated_at = intval($s_remote_updated_at);
+            $out_last_hash = (string)$s_last_hash;
+            $out_is_pinned = filter_var($s_is_pinned, FILTER_VALIDATE_BOOLEAN);
+            $out_creator = mb_substr((string)$s_creator, 0, 10, 'UTF-8');
+        } else {
+            $out_name = mb_substr(trim((string)($game['name'] ?? '')), 0, 100, 'UTF-8');
+            $out_url = (filter_var(trim((string)($game['url'] ?? '')), FILTER_VALIDATE_URL) ?: '');
+            $out_image = (isset($game['image']) ? trim((string)$game['image']) : '');
+            $out_category = (isset($game['category']) ? mb_substr(trim((string)$game['category']), 0, 50, 'UTF-8') : '');
+            $out_players_min = (isset($game['playersMin']) ? max(0, intval($game['playersMin'])) : 0);
+            $out_players_max = (isset($game['playersMax']) ? max(0, intval($game['playersMax'])) : 0);
+            $out_created_at = (isset($game['createdAt']) ? intval($game['createdAt']) : (time() * 1000));
+            $out_has_update = (isset($game['hasUpdate']) ? filter_var($game['hasUpdate'], FILTER_VALIDATE_BOOLEAN) : false);
+            $out_remote_updated_at = (isset($game['remoteUpdatedAt']) ? intval($game['remoteUpdatedAt']) : 0);
+            $out_last_hash = (isset($game['lastHash']) ? trim((string)$game['lastHash']) : '');
+            $out_is_pinned = (isset($game['isPinned']) ? filter_var($game['isPinned'], FILTER_VALIDATE_BOOLEAN) : false);
+            $out_creator = (isset($game['creator']) ? mb_substr(trim((string)$game['creator']), 0, 10, 'UTF-8') : '');
         }
 
         $validated[] = [
             'id' => $game_id,
-            // 生の値を保持（エスケープはクライアントの描画時に行う。htmlspecialcharsすると&amp;が二重エンコードされる）
-            'name' => $is_outdated ? $server_game['name'] : mb_substr(trim((string)$game['name']), 0, 100, 'UTF-8'),
-            'url' => $clean_url,
-            'image' => $is_outdated ? $server_game['image'] : (isset($game['image']) ? trim((string)$game['image']) : ''),
-            'category' => $is_outdated ? $server_game['category'] : (isset($game['category']) ? mb_substr(trim((string)$game['category']), 0, 50, 'UTF-8') : ''),
-            'playersMin' => $is_outdated ? $server_game['playersMin'] : (isset($game['playersMin']) ? max(0, intval($game['playersMin'])) : 0),
-            'playersMax' => $is_outdated ? $server_game['playersMax'] : (isset($game['playersMax']) ? max(0, intval($game['playersMax'])) : 0),
-            'createdAt' => $is_outdated ? $server_game['createdAt'] : (isset($game['createdAt']) ? intval($game['createdAt']) : time() * 1000),
+            'name' => $out_name,
+            'url' => $out_url,
+            'image' => $out_image,
+            'category' => $out_category,
+            'playersMin' => $out_players_min,
+            'playersMax' => $out_players_max,
+            'createdAt' => $out_created_at,
             'updatedAt' => ($client_updated_at > 0 || $server_updated_at > 0) ? max($client_updated_at, $server_updated_at) : (time() * 1000),
             'lastPlayed' => $merged_last_played,
-            'hasUpdate' => $is_outdated ? $server_game['hasUpdate'] : (isset($game['hasUpdate']) ? filter_var($game['hasUpdate'], FILTER_VALIDATE_BOOLEAN) : false),
-            'remoteUpdatedAt' => $is_outdated ? $server_game['remoteUpdatedAt'] : (isset($game['remoteUpdatedAt']) ? intval($game['remoteUpdatedAt']) : 0),
-            'lastHash' => $is_outdated ? $server_game['lastHash'] : (isset($game['lastHash']) ? trim((string)$game['lastHash']) : ''),
-            'isPinned' => $is_outdated ? $server_game['isPinned'] : (isset($game['isPinned']) ? filter_var($game['isPinned'], FILTER_VALIDATE_BOOLEAN) : false),
+            'hasUpdate' => $out_has_update,
+            'remoteUpdatedAt' => $out_remote_updated_at,
+            'lastHash' => $out_last_hash,
+            'isPinned' => $out_is_pinned,
             'playCount' => $merged_play_count,
             'activeUsers' => $merged_active,
-            'creator' => $is_outdated ? ($server_game['creator'] ?? '') : (isset($game['creator']) ? mb_substr(trim((string)$game['creator']), 0, 10, 'UTF-8') : '')
+            'creator' => $out_creator
         ];
     }
 
@@ -244,29 +330,28 @@ if ($fp_lock && flock($fp_lock, LOCK_EX)) {
         exit;
     }
 
-    // 原子的な書き込み（一時ファイル + rename）
-    $tmp_path = $file_path . '.tmp';
+    // Atomic write: temp file + rename
+    $tmp_path = $file_path . '.' . getmypid() . '.tmp';
     $result = @file_put_contents($tmp_path, $json_output, LOCK_EX);
     if ($result !== false) {
         if (!@rename($tmp_path, $file_path)) {
-            // renameが失敗した場合（例: 別パーティション）は通常の方法にフォールバック
-            $result = @file_put_contents($file_path, $json_output);
             @unlink($tmp_path);
+            $result = false;
         }
     }
     if ($result !== false) {
         @chmod($file_path, 0666);
-        
+
         $response["status"] = "success";
         $response["message"] = "保存成功！";
         $response["count"] = count($validated);
-        $response["backup"] = $backup_success ? ($backup_name ? basename($backup_name) : 'created') : 'skipped';    
+        $response["backup"] = $backup_success ? ($backup_name ? basename($backup_name) : 'created') : 'skipped';
         http_response_code(200);
     } else {
         $response["message"] = "games.json への書き込みに失敗しました。パーミッションを確認してください（chmod 666 games.json）";
         http_response_code(500);
     }
-    
+
     flock($fp_lock, LOCK_UN);
 } else {
     $response["message"] = "サーバーが混雑しています。もう一度お試しください。";
@@ -278,4 +363,3 @@ if ($fp_lock) {
 }
 
 echo json_encode($response, JSON_UNESCAPED_UNICODE);
-
